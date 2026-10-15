@@ -1,18 +1,22 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#2f5d45"><title>Field Record</title><link rel="stylesheet" href="styles.css"></head>
+<meta name="theme-color" content="#2f5d45"><title>Field Record</title><link rel="stylesheet" href="styles.css?v=3"></head>
 <body><main class="wrap">
-<header class="top"><div class="grow">
+<header class="top" id="top"><div class="grow">
 <p class="eyebrow">Field journal</p>
 <input id="dayTitle" class="day-title" aria-label="Name this day" placeholder="New Day">
 <p id="dateLabel" class="muted"></p></div>
 <button id="lookBtn" class="pill" type="button" title="Themes coming later">Look</button></header>
+<div id="home">
 <div id="categories" class="cat-grid"></div>
 <section class="card mt8">
 <div class="cal-head"><button id="prevMonth" class="circle" aria-label="Previous month">&#8249;</button>
-<div class="center"><p id="calDay" class="lg"></p><p id="calMonth" class="accent sm u"></p></div>
+<div class="center"><p id="calDay" class="lg"></p><button id="calMonth" class="month-btn" type="button" aria-haspopup="dialog" aria-expanded="false">Month</button></div>
 <button id="nextMonth" class="circle" aria-label="Next month">&#8250;</button></div>
 <div class="cal-nav"><button id="earlier">Earlier</button><button id="today">Today</button><button id="later">Later</button></div>
+<div id="monthPicker" class="picker" role="dialog" aria-label="Choose month and year" hidden></div>
 <div id="calGrid" class="cal-grid"></div></section>
 <section class="card mt4"><h2>Days</h2><p id="daysEmpty" class="muted">Name a day, or save an entry, and it will show up here.</p><div id="daysList" class="days"></div></section>
-</main><script src="app.js"></script></body></html>
+</div>
+<section id="catScreen" class="cat-screen" hidden></section>
+</main><script src="app.js?v=3"></script></body></html>
