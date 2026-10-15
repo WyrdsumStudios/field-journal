@@ -47,7 +47,16 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .lbl:first-child{margin-top:0}
 .lbl .field{margin-top:.35rem}
 textarea.note{min-height:11rem}
-textarea.dream{min-height:6.5rem}
+textarea.dream,textarea.section-text{min-height:6.5rem}
+.note-sections{margin-top:.35rem}
+.note-section{margin-top:.9rem}
+.section-head{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}
+.section-name{flex:1 1 8rem;min-width:0;margin-top:0}
+.section-tools{display:flex;gap:.35rem;flex:0 0 auto}
+.section-move,.section-remove{min-height:2.75rem;padding:0 .7rem;border:1px solid var(--line);border-radius:.6rem;background:var(--bg)}
+.section-move:disabled{opacity:.35;cursor:default}
+.section-remove{color:var(--muted)}
+.add-section{margin-top:.75rem}
 .kicker{margin:.75rem 0 0;font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .labeled .note-text{margin-top:.15rem}
 .watch{margin:1.1rem 0 0;color:var(--muted);font-size:.875rem}
