@@ -82,12 +82,13 @@ const TYPES={
     tagLabel:'Quality',
     blank(day){
       const times=priorNight(day||sel);
-      return {title:'',tags:[],images:[],dreams:'',sleepStart:times.sleepStart,sleepEnd:times.sleepEnd};
+      return {title:'',note:'',tags:[],images:[],dreams:'',sleepStart:times.sleepStart,sleepEnd:times.sleepEnd};
     },
     fromEntry(e){
       const times=priorNight(e.date||sel);
       return {
         title:e.title||'',
+        note:e.note||'',
         tags:[...(e.tags||[])],
         images:[...(e.images||[])],
         dreams:e.dreams||'',
@@ -95,9 +96,10 @@ const TYPES={
         sleepEnd:e.sleepEnd||times.sleepEnd
       };
     },
-    hasContent(d){return !!(d.title.trim()||(d.dreams||'').trim()||(d.tags||[]).length||(d.images||[]).length||(d.sleepStart&&d.sleepEnd))},
+    hasContent(d){return !!(d.title.trim()||(d.note||'').trim()||(d.dreams||'').trim()||(d.tags||[]).length||(d.images||[]).length||(d.sleepStart&&d.sleepEnd))},
     write(entry,d){
       entry.title=d.title.trim();
+      entry.note=(d.note||'').trim();
       entry.tags=[...d.tags];
       entry.images=[...(d.images||[])];
       entry.dreams=(d.dreams||'').trim();
@@ -115,14 +117,20 @@ const TYPES={
         h('p',{class:'duration',id:'sleepDuration'},dur||'—')
       ];
     },
-    tail(){return h('label',{class:'lbl'},'Dreams',h('textarea',{id:'entryDreams',class:'field note'}))},
+    tail(){
+      return h('div',null,
+        h('label',{class:'lbl'},'Dreams',h('textarea',{id:'entryDreams',class:'field dream'})),
+        h('label',{class:'lbl'},'Notes',h('textarea',{id:'entryNote',class:'field dream'})));
+    },
     cardBits(e){
       const dur=formatDuration(minutesBetween(e.sleepStart,e.sleepEnd));
       const times=[fmtDt(e.sleepStart),fmtDt(e.sleepEnd)].filter(Boolean).join(' – ');
       const line=[times,dur].filter(Boolean).join(' · ');
+      const block=(label,text)=>text?h('div',{class:'labeled'},h('p',{class:'kicker'},label),h('p',{class:'note-text'},text)):null;
       return [
         line?h('p',{class:'sleep-line','data-duration':dur},line):null,
-        e.dreams?h('p',{class:'note-text'},e.dreams):null,
+        block('Dreams',e.dreams),
+        block('Notes',e.note),
         tagLine(e.tags),
         imageGrid(e.images)
       ];
@@ -134,11 +142,27 @@ function typeOf(cat){
   return TYPES[id];
 }
 
+const LOOKS=[
+  {id:'paper',name:'Paper',note:'Warm paper and a plain edge'},
+  {id:'wood',name:'Wood',note:'Grain, parchment, carved frame'},
+  {id:'vine',name:'Vine',note:'Leaves and a vine frame'},
+  {id:'retro',name:'90s Retro',note:'Pixel sky and lime bevels'},
+  {id:'earth',name:'Earth',note:'Starfield and a circuit frame'},
+  {id:'water',name:'Water',note:'Watercolor and a ripple frame'}
+];
+const LOOK_IDS=new Set(LOOKS.map(l=>l.id));
+const THEME_COLOR={paper:'#2f5d45',wood:'#7a4e2a',vine:'#1e6b38',retro:'#123d16',earth:'#07182c',water:'#1f7c84'};
+function applyLook(id){
+  const look=LOOK_IDS.has(id)?id:'paper';
+  document.documentElement.dataset.look=look;
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta)meta.setAttribute('content',THEME_COLOR[look]);
+}
 function load(){
   try{
     const s=JSON.parse(localStorage.getItem(KEY));
     if(s&&Array.isArray(s.categories)){
-      const state=Object.assign({categories:[],entries:[],dayTitles:{}},s);
+      const state=Object.assign({categories:[],entries:[],dayTitles:{},look:'paper'},s);
       state.categories.forEach(c=>{
         if(!Array.isArray(c.tags))c.tags=[];
         if(!c.type||!TYPES[c.type])c.type='notes';
@@ -148,19 +172,21 @@ function load(){
         if(!Array.isArray(e.images))e.images=[];
       });
       if(!state.dayTitles||typeof state.dayTitles!=='object')state.dayTitles={};
+      if(!LOOK_IDS.has(state.look))state.look='paper';
       return state;
     }
   }catch(e){}
-  return {categories:[],entries:[],dayTitles:{}};
+  return {categories:[],entries:[],dayTitles:{},look:'paper'};
 }
 let state=load();
+applyLook(state.look);
 const save=()=>localStorage.setItem(KEY,JSON.stringify(state));
 let sel=key(new Date()),view=parse(sel),addingCat=false,newType='notes';
 let openCat=null,editingId=null,tagEdit=false,renamingTag=null,focusTitle=false;
 let draft=TYPES.notes.blank(),pendingTag='',imageError='';
 const sessionNew=new Set();
 const expanded=new Set();
-let picker=false,pickerYear=view.getFullYear();
+let picker=false,pickerYear=view.getFullYear(),lookOpen=false;
 const urlCache=new Map();
 let dbPromise=null;
 
@@ -568,7 +594,9 @@ function renderCatScreen(){
   root.replaceChildren(
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
-      h('p',{class:'muted',id:'catDate'},fmt(sel))),
+      h('div',{class:'cat-tools'},
+        h('button',{type:'button',class:'pill',id:'catLook',onclick:openLook},'Look'),
+        h('p',{class:'muted',id:'catDate'},fmt(sel)))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
     form,
     h('div',{class:'entry-list',id:'catEntries'},
@@ -718,12 +746,47 @@ $('calMonth').onclick=()=>{picker=!picker;if(picker)pickerYear=view.getFullYear(
 $('earlier').onclick=()=>shift(-1);
 $('later').onclick=()=>shift(1);
 $('today').onclick=()=>select(key(new Date()));
-$('lookBtn').onclick=()=>alert('Themes ("Look") are not rebuilt yet.');
+function renderLook(){
+  const modal=$('lookModal');
+  if(!modal)return;
+  modal.hidden=!lookOpen;
+  $('lookBtn').setAttribute('aria-expanded',lookOpen?'true':'false');
+  if(!lookOpen)return;
+  $('lookList').replaceChildren(...LOOKS.map(l=>h('button',{
+    type:'button',
+    class:'look-opt'+(state.look===l.id?' on':''),
+    'data-look':l.id,
+    'aria-pressed':state.look===l.id?'true':'false',
+    onclick:()=>chooseLook(l.id)
+  },
+    h('span',{class:'swatch '+l.id,role:'presentation'}),
+    h('span',{class:'look-name'},l.name),
+    h('span',{class:'muted sm look-note'},l.note))));
+}
+function openLook(){
+  lookOpen=true;
+  renderLook();
+  const b=$('lookClose');
+  if(b)b.focus();
+}
+function closeLook(){lookOpen=false;renderLook()}
+function chooseLook(id){
+  if(!LOOK_IDS.has(id))return;
+  state.look=id;
+  save();
+  applyLook(id);
+  renderLook();
+}
+$('lookBtn').onclick=openLook;
+$('lookClose').onclick=closeLook;
+$('lookModal').addEventListener('click',ev=>{if(ev.target.id==='lookModal')closeLook()});
 $('lightbox').addEventListener('click',ev=>{
   if(ev.target.id==='lightbox'||ev.target.id==='lightboxClose')closeLightbox();
 });
 document.addEventListener('keydown',ev=>{
-  if(ev.key==='Escape'&&!$('lightbox').hidden)closeLightbox();
+  if(ev.key!=='Escape')return;
+  if(lookOpen){closeLook();return}
+  if(!$('lightbox').hidden)closeLightbox();
 });
 render();
 })();
