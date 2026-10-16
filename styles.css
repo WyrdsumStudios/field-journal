@@ -111,6 +111,17 @@ textarea.goal-note{min-height:6.5rem;resize:vertical}
 .type-row{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.45rem}
 .type-opt{min-height:2.75rem;padding:0 .95rem;border:1px solid var(--line);border-radius:999px;background:var(--bg)}
 .type-opt.on{background:var(--accent);color:var(--on-accent, var(--surface));border-color:var(--accent)}
+.wx-block{margin:0 0 1rem}
+.place-name{margin:0;font-size:1.15rem}
+.place-results{display:flex;flex-direction:column;gap:.35rem;margin-top:.55rem}
+.place-hit{text-align:left;min-height:2.75rem;padding:.45rem .75rem;border:1px solid var(--line);border-radius:.7rem;background:var(--bg)}
+.wx{margin-top:.35rem}
+.wx-now,.wx-day,.wx-status,.wx-saved{margin:.2rem 0 0}
+.wx-icon{font-style:normal}
+.wx-conds{display:flex;flex-wrap:wrap;gap:.4rem}
+.cond{display:inline-flex;align-items:center;gap:.35rem;min-height:2.75rem;padding:0 .8rem;border:1px solid var(--line);border-radius:999px;background:var(--bg)}
+.cond.on{background:var(--accent);color:var(--on-accent, var(--surface));border-color:var(--accent)}
+.wx-slot{margin-top:.35rem}
 .sleep-times{display:grid;grid-template-columns:1fr;gap:.35rem}
 @media(min-width:640px){.sleep-times{grid-template-columns:1fr 1fr;gap:.75rem}}
 .duration{margin:.45rem 0 0;color:var(--accent);font-size:1.05rem}
@@ -204,7 +215,8 @@ html[data-look="earth"] .pill,html[data-look="earth"] .circle,html[data-look="ea
 html[data-look="earth"] .pill,html[data-look="earth"] .circle{background:rgba(6,18,36,.8);color:#d7ecff;border:1px solid #3d7eb8;box-shadow:0 0 10px rgba(80,160,255,.28)}
 html[data-look="earth"] .btn:not(.ghost){box-shadow:0 0 12px rgba(125,255,166,.28)}
 html[data-look="water"] .pill,html[data-look="water"] .circle{background:rgba(255,252,247,.78);border:1px solid #c6a15a;color:#16343a}
-html[data-look="water"] .field,html[data-look="water"] .year-input,html[data-look="water"] .month-grid .month,html[data-look="water"] .type-opt{background:rgba(255,252,247,.8)}
+html[data-look="water"] .field,html[data-look="water"] .year-input,html[data-look="water"] .month-grid .month,html[data-look="water"] .type-opt,html[data-look="water"] .cond,html[data-look="water"] .place-hit{background:rgba(255,252,247,.8)}
+html[data-look="water"] .cond.on{background:var(--accent);color:var(--on-accent, var(--surface));border-color:var(--accent)}
 
 html[data-look="retro"] .card,html[data-look="retro"] .entry-card,html[data-look="retro"] .day-block,html[data-look="retro"] .new-cat,html[data-look="retro"] .look-opt,html[data-look="retro"] .field,html[data-look="retro"] .pill,html[data-look="retro"] .btn,html[data-look="retro"] .circle,html[data-look="retro"] .chip,html[data-look="retro"] .thumb-open{border-radius:.25rem}
 html[data-look="retro"] .card,html[data-look="retro"] .entry-card,html[data-look="retro"] .day-block,html[data-look="retro"] .new-cat{background:#8ae04f;color:#14240f;border:3px solid #0e3012;box-shadow:inset 3px 3px 0 #d7ff9e,inset -3px -3px 0 #2f7a18,4px 4px 0 #041a06}
@@ -222,7 +234,8 @@ html[data-look="retro"] .cal-grid button.sel{background:#123d16;color:#e7ffc4}
 html[data-look="retro"] .pill,html[data-look="retro"] .circle,html[data-look="retro"] .btn{background:#e4e0d8;color:#111;border:2px solid #111;box-shadow:inset 2px 2px 0 #fff,inset -2px -2px 0 #6a6a6a}
 html[data-look="retro"] .btn.ghost{background:#c8e878;color:#14240f}
 html[data-look="retro"] .day-block.sel{outline:3px solid #f2e85a;outline-offset:2px}
-html[data-look="retro"] .field,html[data-look="retro"] .year-input,html[data-look="retro"] .type-opt,html[data-look="retro"] .month-grid .month{background:#f4ffe4;color:#14240f;border-color:#0e3012}
+html[data-look="retro"] .field,html[data-look="retro"] .year-input,html[data-look="retro"] .type-opt,html[data-look="retro"] .cond,html[data-look="retro"] .place-hit,html[data-look="retro"] .month-grid .month{background:#f4ffe4;color:#14240f;border-color:#0e3012}
+html[data-look="retro"] .cond.on{background:var(--accent);color:var(--on-accent, #14240f);border-color:var(--accent)}
 html[data-look="retro"] .chip{color:#123d16;border-color:#123d16}
 html[data-look="retro"] .chip.on{background:#123d16;color:#e7ffc4}
 html[data-look="retro"] .new-cat{color:#123d16}

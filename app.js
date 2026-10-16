@@ -104,6 +104,351 @@ function fmtDt(s){
   return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
 }
 
+const CONDITIONS=[
+  {id:'sunny',label:'Sunny',icon:'☀️'},
+  {id:'cloudy',label:'Cloudy',icon:'☁️'},
+  {id:'rain',label:'Rain',icon:'🌧️'},
+  {id:'snow',label:'Snow',icon:'❄️'},
+  {id:'storm',label:'Storm',icon:'⛈️'},
+  {id:'wind',label:'Wind',icon:'💨'},
+  {id:'fog',label:'Fog',icon:'🌫️'}
+];
+const WX_KEY='field-record-weather';
+const FORECAST_MS=30*60*1000;
+const ARCHIVE_MS=12*60*60*1000;
+const WX_RETRY_MS=60*1000;
+let placeQuery='',placeResults=[],placeStatus='',placeEditing=false,placeSeq=0,tempTouched=false;
+const wxBusy=new Set();
+const wxFail=Object.create(null);
+function conditionById(id){return CONDITIONS.find(c=>c.id===id)||null}
+function wmoInfo(code){
+  const c=Number(code);
+  if(c===0)return {icon:'☀️',label:'Clear'};
+  if(c===1)return {icon:'🌤️',label:'Mainly clear'};
+  if(c===2)return {icon:'⛅',label:'Partly cloudy'};
+  if(c===3)return {icon:'☁️',label:'Cloudy'};
+  if(c===45||c===48)return {icon:'🌫️',label:'Fog'};
+  if((c>=51&&c<=67)||(c>=80&&c<=82))return {icon:'🌧️',label:'Rain'};
+  if((c>=71&&c<=77)||c===85||c===86)return {icon:'❄️',label:'Snow'};
+  if(c>=95)return {icon:'⛈️',label:'Thunderstorm'};
+  return {icon:'🌡️',label:'Weather'};
+}
+function normalizePlace(p){
+  if(!p||typeof p!=='object')return null;
+  const latitude=Number(p.latitude),longitude=Number(p.longitude);
+  if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return null;
+  if(latitude<-90||latitude>90||longitude<-180||longitude>180)return null;
+  const name=String(p.name||'My location').trim().slice(0,80)||'My location';
+  return {name,admin1:String(p.admin1||'').slice(0,80),country:String(p.country||'').slice(0,80),latitude,longitude};
+}
+function placeLabel(p){
+  if(!p)return '';
+  const bits=[p.name];
+  if(p.admin1)bits.push(p.admin1);
+  else if(p.country)bits.push(p.country);
+  return bits.filter(Boolean).join(', ');
+}
+function placeKey(p){return `${Number(p.latitude).toFixed(2)},${Number(p.longitude).toFixed(2)}`}
+function loadWx(){
+  try{const s=JSON.parse(localStorage.getItem(WX_KEY));if(s&&typeof s==='object'&&!Array.isArray(s))return s}catch(e){}
+  return {};
+}
+function saveWx(all){try{localStorage.setItem(WX_KEY,JSON.stringify(all))}catch(e){}}
+function wxBag(p){return p?loadWx()[placeKey(p)]||null:null}
+function dayShift(dateKey){
+  const a=parse(dateKey),b=parse(key(new Date()));
+  return Math.round((a.getTime()-b.getTime())/86400000);
+}
+function formatTemp(n){
+  const v=Number(n);
+  if(!Number.isFinite(v))return '';
+  const r=Math.round(v*10)/10;
+  return (Number.isInteger(r)?String(r):r.toFixed(1))+'°';
+}
+function formatPrecip(n){
+  const v=Number(n);
+  if(!Number.isFinite(v))return '';
+  const r=Math.round(v*10)/10;
+  return (Number.isInteger(r)?String(r):r.toFixed(1))+' mm';
+}
+function dailyRow(data,date){
+  const d=data&&data.daily;
+  if(!d||!Array.isArray(d.time))return null;
+  const i=d.time.indexOf(date);
+  if(i<0)return null;
+  const num=list=>{const v=list&&list[i];return v==null||v===''||!Number.isFinite(Number(v))?null:Number(v)};
+  const code=num(d.weather_code),max=num(d.temperature_2m_max),min=num(d.temperature_2m_min),precip=num(d.precipitation_sum);
+  if(code==null&&max==null&&min==null)return null;
+  return {code,max,min,precip};
+}
+function fetchJson(url){
+  const ctrl=typeof AbortController==='function'?new AbortController():null;
+  const timer=ctrl?setTimeout(()=>ctrl.abort(),12000):null;
+  return fetch(url,ctrl?{signal:ctrl.signal}:undefined).then(r=>{
+    if(!r.ok)throw new Error(String(r.status));
+    return r.json();
+  }).finally(()=>{if(timer)clearTimeout(timer)});
+}
+function storeForecast(place,data){
+  const all=loadWx();
+  const pk=placeKey(place);
+  const prev=all[pk]||{};
+  const forecast={};
+  const times=data.daily&&data.daily.time||[];
+  times.forEach(date=>{const row=dailyRow(data,date);if(row)forecast[date]=row});
+  const cur=data.current||{};
+  all[pk]=Object.assign({},prev,{
+    forecastAt:Date.now(),
+    current:{
+      temp:cur.temperature_2m==null||!Number.isFinite(Number(cur.temperature_2m))?null:Number(cur.temperature_2m),
+      code:cur.weather_code==null||!Number.isFinite(Number(cur.weather_code))?null:Number(cur.weather_code)
+    },
+    forecast,
+    archive:prev.archive||{}
+  });
+  saveWx(all);
+}
+function storeArchive(place,date,row){
+  const all=loadWx();
+  const pk=placeKey(place);
+  const prev=all[pk]||{};
+  const archive=Object.assign({},prev.archive);
+  archive[date]=Object.assign({at:Date.now()},row);
+  const keys=Object.keys(archive).sort();
+  while(keys.length>40)delete archive[keys.shift()];
+  all[pk]=Object.assign({},prev,{archive});
+  saveWx(all);
+}
+function wxCoords(place){
+  return `latitude=${encodeURIComponent(place.latitude)}&longitude=${encodeURIComponent(place.longitude)}`;
+}
+const WX_DAILY='daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto';
+function ensureForecast(place){
+  const pk=placeKey(place);
+  const bag=wxBag(place);
+  const now=Date.now();
+  if(bag&&bag.forecastAt&&now-bag.forecastAt<FORECAST_MS)return;
+  if(wxFail['f:'+pk]&&now-wxFail['f:'+pk]<WX_RETRY_MS)return;
+  const token='f:'+pk;
+  if(wxBusy.has(token))return;
+  wxBusy.add(token);
+  paintWeather();
+  const url=`https://api.open-meteo.com/v1/forecast?${wxCoords(place)}&current=temperature_2m,weather_code&${WX_DAILY}&forecast_days=7`;
+  fetchJson(url).then(data=>{storeForecast(place,data);delete wxFail['f:'+pk]}).catch(()=>{wxFail['f:'+pk]=Date.now()}).finally(()=>{wxBusy.delete(token);paintWeather()});
+}
+function ensureArchive(place,date){
+  const pk=placeKey(place);
+  const bag=wxBag(place);
+  const row=bag&&bag.archive&&bag.archive[date];
+  const now=Date.now();
+  if(row&&row.at&&now-row.at<ARCHIVE_MS&&(row.max!=null||row.code!=null))return;
+  const token='a:'+pk+':'+date;
+  if(wxFail[token]&&now-wxFail[token]<WX_RETRY_MS)return;
+  if(wxBusy.has(token))return;
+  wxBusy.add(token);
+  paintWeather();
+  const archive=`https://archive-api.open-meteo.com/v1/archive?${wxCoords(place)}&start_date=${date}&end_date=${date}&${WX_DAILY}`;
+  fetchJson(archive).then(data=>{
+    const hit=dailyRow(data,date);
+    if(hit)return hit;
+    throw new Error('empty');
+  }).catch(()=>{
+    const past=Math.min(92,Math.max(1,-dayShift(date)));
+    if(dayShift(date)<-92)throw new Error('old');
+    return fetchJson(`https://api.open-meteo.com/v1/forecast?${wxCoords(place)}&${WX_DAILY}&past_days=${past}&forecast_days=1`).then(data=>{
+      const hit=dailyRow(data,date);
+      if(!hit)throw new Error('empty');
+      return hit;
+    });
+  }).then(hit=>{storeArchive(place,date,hit);delete wxFail[token]}).catch(()=>{wxFail[token]=Date.now()}).finally(()=>{wxBusy.delete(token);paintWeather()});
+}
+function ensureWeather(cat){
+  if(!cat||!cat.place)return;
+  ensureForecast(cat.place);
+  if(dayShift(sel)<0)ensureArchive(cat.place,sel);
+}
+function ensureVisibleWeather(){
+  const cats=(openGoal&&!openCat)?[]:state.categories.filter(c=>c&&c.type==='weather'&&c.place&&(!openCat||c.id===openCat));
+  cats.forEach(ensureWeather);
+}
+function wxDay(bag,date){
+  if(!bag)return null;
+  if(dayShift(date)>=0)return bag.forecast&&bag.forecast[date]||null;
+  return (bag.archive&&bag.archive[date])||(bag.forecast&&bag.forecast[date])||null;
+}
+function nowLine(cur){
+  const info=wmoInfo(cur.code);
+  const temp=formatTemp(cur.temp);
+  return h('p',{class:'wx-now'},h('span',{class:'wx-icon','aria-hidden':'true'},info.icon),' ',[info.label,temp?temp+' now':''].filter(Boolean).join(' · '));
+}
+function dayLine(day){
+  const info=wmoInfo(day.code);
+  const bits=[info.label];
+  if(day.max!=null)bits.push('High '+formatTemp(day.max));
+  if(day.min!=null)bits.push('Low '+formatTemp(day.min));
+  if(day.precip!=null)bits.push(formatPrecip(day.precip));
+  return h('p',{class:'wx-day'},h('span',{class:'wx-icon','aria-hidden':'true'},info.icon),' ',bits.join(' · '));
+}
+function weatherReadout(cat){
+  const place=cat&&cat.place;
+  if(!place)return h('p',{class:'muted sm wx-status'},'Set a city to see the forecast.');
+  const bag=wxBag(place)||{};
+  const shift=dayShift(sel);
+  const pk=placeKey(place);
+  const day=wxDay(bag,sel);
+  const haveCurrent=!!(bag.current&&(bag.current.temp!=null||bag.current.code!=null));
+  const token=shift>=0?'f:'+pk:'a:'+pk+':'+sel;
+  const waiting=wxBusy.has('f:'+pk)||(shift<0&&wxBusy.has('a:'+pk+':'+sel));
+  const kids=[];
+  if(haveCurrent)kids.push(nowLine(bag.current));
+  if(shift>6)kids.push(h('p',{class:'muted sm wx-status'},'Forecast is available for the next 7 days.'));
+  else if(day)kids.push(dayLine(day));
+  else if(waiting)kids.push(h('p',{class:'muted sm wx-status'},'Loading weather…'));
+  else kids.push(h('p',{class:'muted sm wx-status'},'Weather is unavailable right now.'));
+  if((day||haveCurrent)&&!!wxFail[token])kids.push(h('p',{class:'muted sm wx-saved'},'Showing saved weather.'));
+  return h('div',{class:'wx','data-wx':sel},...kids);
+}
+function paintWeather(){
+  document.querySelectorAll('[data-wx-slot]').forEach(slot=>{
+    const cat=catById(slot.getAttribute('data-wx-slot'));
+    if(cat)slot.replaceChildren(weatherReadout(cat));
+  });
+  prefillTemp();
+}
+function prefillTemp(){
+  if(editingId||tempTouched)return;
+  const cat=currentCat();
+  if(!cat||cat.type!=='weather'||!cat.place)return;
+  const input=$('wxTemp');
+  if(!input||input.value!=='')return;
+  const bag=wxBag(cat.place);
+  if(!bag)return;
+  let n=null;
+  if(dayShift(sel)===0&&bag.current&&bag.current.temp!=null)n=bag.current.temp;
+  const day=wxDay(bag,sel);
+  if(n==null&&day&&day.max!=null)n=day.max;
+  if(n==null)return;
+  const rounded=Math.round(n);
+  draft.temperature=rounded;
+  input.value=String(rounded);
+}
+function weatherHeading(e){
+  const c=conditionById(e.condition);
+  const parts=[];
+  if(c)parts.push(c.icon+' '+c.label);
+  if(e.temperature!=null&&Number.isFinite(Number(e.temperature)))parts.push(formatTemp(e.temperature));
+  return parts.join(' · ')||'Weather log';
+}
+function onPlaceInput(ev){
+  placeQuery=ev.target.value;
+  const q=placeQuery.trim();
+  clearTimeout(onPlaceInput.timer);
+  if(q.length<2){placeResults=[];placeStatus='';return}
+  placeStatus='searching';
+  onPlaceInput.timer=setTimeout(()=>searchPlaces(q),300);
+}
+function searchPlaces(q){
+  const seq=++placeSeq;
+  fetchJson(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`).then(data=>{
+    if(seq!==placeSeq||placeQuery.trim()!==q)return;
+    const list=(Array.isArray(data.results)?data.results:[]).map(r=>normalizePlace({name:r.name,admin1:r.admin1||'',country:r.country||'',latitude:r.latitude,longitude:r.longitude})).filter(Boolean);
+    if($('entryForm'))readDraft();
+    const el=$('placeQuery');
+    const focused=!!(el&&document.activeElement===el);
+    const start=focused?el.selectionStart:null;
+    const end=focused?el.selectionEnd:null;
+    placeResults=list;
+    placeStatus=list.length?'ready':'none';
+    render();
+    if(focused){
+      const next=$('placeQuery');
+      if(next){next.focus();if(start!=null&&next.setSelectionRange)next.setSelectionRange(start,end)}
+    }
+  }).catch(()=>{
+    if(seq!==placeSeq||placeQuery.trim()!==q)return;
+    if($('entryForm'))readDraft();
+    placeResults=[];
+    placeStatus='error';
+    render();
+  });
+}
+function choosePlace(p){
+  const cat=currentCat();
+  if(!cat||cat.type!=='weather')return;
+  if($('entryForm'))readDraft();
+  const place=normalizePlace(p);
+  if(!place)return;
+  cat.place=Object.assign({},cat.place||{},place);
+  placeEditing=false;
+  placeQuery='';
+  placeResults=[];
+  placeStatus='';
+  save();
+  render();
+}
+function useMyLocation(){
+  if(placeStatus==='locating')return;
+  if(!navigator.geolocation){placeStatus='loc-denied';render();return}
+  if($('entryForm'))readDraft();
+  placeStatus='locating';
+  render();
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const latitude=pos.coords.latitude,longitude=pos.coords.longitude;
+    fetchJson(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}&localityLanguage=en`).then(data=>choosePlace({
+      name:data.city||data.locality||'My location',
+      admin1:data.principalSubdivision||'',
+      country:data.countryName||'',
+      latitude,longitude
+    })).catch(()=>choosePlace({name:'My location',admin1:'',country:'',latitude,longitude}));
+  },()=>{
+    placeStatus='loc-denied';
+    if($('entryForm'))readDraft();
+    render();
+  },{enableHighAccuracy:false,timeout:10000,maximumAge:600000});
+}
+function placeEditor(cat){
+  if(cat.place&&!placeEditing){
+    return h('div',{class:'row place-set'},
+      h('p',{class:'place-name',id:'placeName'},placeLabel(cat.place)),
+      h('button',{type:'button',class:'btn ghost',id:'changePlace',onclick:()=>{
+        if($('entryForm'))readDraft();
+        placeEditing=true;placeQuery='';placeResults=[];placeStatus='';
+        render();
+        const el=$('placeQuery');
+        if(el)el.focus();
+      }},'Change city'));
+  }
+  const status=placeStatus==='searching'?'Searching…':placeStatus==='none'?'No matching city.':placeStatus==='error'?'City search is unavailable right now.':placeStatus==='locating'?'Finding your location…':placeStatus==='loc-denied'?'Location is unavailable. Search for a city instead.':'';
+  return h('div',{class:'place-find',id:'placeFind'},
+    h('label',{class:'lbl'},'City',h('input',{id:'placeQuery',class:'field',value:placeQuery,placeholder:'Search for a city','aria-label':'Search for a city',autocomplete:'off',oninput:onPlaceInput,onkeydown:ev=>{if(ev.key==='Enter')ev.preventDefault()}})),
+    h('div',{class:'actions'},
+      h('button',{type:'button',class:'btn ghost',id:'useLocation',onclick:useMyLocation},'Use my location'),
+      cat.place?h('button',{type:'button',class:'btn ghost',id:'cancelPlace',onclick:()=>{
+        if($('entryForm'))readDraft();
+        placeEditing=false;placeQuery='';placeResults=[];placeStatus='';
+        render();
+      }},'Cancel'):null),
+    status?h('p',{class:'muted sm',id:'placeStatus'},status):null,
+    placeResults.length?h('div',{class:'place-results',id:'placeResults'},...placeResults.map(p=>h('button',{type:'button',class:'place-hit',onclick:()=>choosePlace(p)},placeLabel(p)))):null);
+}
+function weatherPanel(cat){
+  return h('div',{class:'card wx-block',id:'wxBlock'},
+    placeEditor(cat),
+    cat.place&&!placeEditing?h('div',{id:'wxReadout','data-wx-slot':cat.id},weatherReadout(cat)):null);
+}
+function weatherFields(d){
+  return [
+    h('div',{class:'wx-conds',id:'wxConds',role:'group','aria-label':'Condition'},...CONDITIONS.map(c=>h('button',{
+      type:'button',class:'cond'+(d.condition===c.id?' on':''),'data-cond':c.id,'aria-pressed':d.condition===c.id?'true':'false',
+      onclick:()=>{readDraft();draft.condition=draft.condition===c.id?'':c.id;render()}
+    },h('span',{class:'wx-icon','aria-hidden':'true'},c.icon),c.label))),
+    h('label',{class:'lbl',for:'wxTemp'},'Temperature (°C)',h('input',{id:'wxTemp',class:'field',type:'number',inputmode:'decimal',step:'0.1','aria-label':'Temperature in degrees Celsius',value:d.temperature==null?'':String(d.temperature),oninput:ev=>{
+      tempTouched=true;
+      const raw=ev.target.value.trim();
+      draft.temperature=raw===''?null:Number(raw);
+    }}))
+  ];
+}
 const TYPES={
   notes:{
     id:'notes',
@@ -180,6 +525,35 @@ const TYPES={
         ...blocks,
         imageGrid(e.images)
       ];
+    }
+  },
+  weather:{
+    id:'weather',
+    label:'Weather',
+    tagLabel:'How it felt',
+    tagPlaceholder:'New word, kept for this weather',
+    blank(){return {title:'',note:'',tags:[],images:[],condition:'',temperature:null}},
+    fromEntry(e){
+      const cond=conditionById(e.condition)?e.condition:'';
+      const t=e.temperature;
+      return {title:e.title||'',note:e.note||'',tags:[...(e.tags||[])],images:[...(e.images||[])],condition:cond,temperature:t==null||t===''||!Number.isFinite(Number(t))?null:Number(t)};
+    },
+    hasContent(d){
+      return !!(d.condition||(d.temperature!=null&&Number.isFinite(Number(d.temperature)))||(d.note||'').trim()||(d.tags||[]).length||(d.images||[]).length);
+    },
+    write(entry,d){
+      entry.condition=conditionById(d.condition)?d.condition:'';
+      const t=d.temperature;
+      entry.temperature=t==null||t===''||!Number.isFinite(Number(t))?null:Number(t);
+      entry.note=(d.note||'').trim();
+      entry.tags=[...d.tags];
+      entry.images=[...(d.images||[])];
+      entry.title=entry.condition?conditionById(entry.condition).label:'';
+    },
+    fields(d){return weatherFields(d)},
+    tail(){return h('label',{class:'lbl'},'Notes',h('textarea',{id:'entryNote',class:'field note'}))},
+    cardBits(e){
+      return [e.note?h('p',{class:'note-text'},e.note):null,tagLine(e.tags),imageGrid(e.images)];
     }
   }
 };
@@ -350,6 +724,21 @@ function load(){
           if(JSON.stringify(raw)!==JSON.stringify(next))migrated=true;
           c.sectionTags=next;
         }
+        if(c.type==='weather'){
+          if(c.place==null){
+            if(!Object.prototype.hasOwnProperty.call(c,'place')){c.place=null;migrated=true}
+          }else{
+            const place=normalizePlace(c.place);
+            if(!place){c.place=null;migrated=true}
+            else{
+              if(typeof c.place.name!=='string'||!c.place.name.trim()){c.place.name=place.name;migrated=true}
+              if(typeof c.place.admin1!=='string'){c.place.admin1=place.admin1;migrated=true}
+              if(typeof c.place.country!=='string'){c.place.country=place.country;migrated=true}
+              if(!Number.isFinite(Number(c.place.latitude))){c.place.latitude=place.latitude;migrated=true}
+              if(!Number.isFinite(Number(c.place.longitude))){c.place.longitude=place.longitude;migrated=true}
+            }
+          }
+        }
       });
       state.entries.forEach(e=>{
         if(!Array.isArray(e.tags))e.tags=[];
@@ -375,6 +764,15 @@ function load(){
         const hasDreams=mine.some(e=>e.sections.some(s=>String(s.name||'').trim().toLowerCase()==='dreams'));
         c.sectionNames=hasDreams?['Dreams','Notes']:['Notes'];
         migrated=true;
+      });
+      state.entries.forEach(e=>{
+        const cat=state.categories.find(c=>c.id===e.categoryId);
+        if(!cat||cat.type!=='weather')return;
+        const cond=conditionById(e.condition)?e.condition:'';
+        if(e.condition!==cond){e.condition=cond;migrated=true}
+        const t=e.temperature;
+        const next=t==null||t===''||!Number.isFinite(Number(t))?null:Number(t);
+        if(e.temperature!==next){e.temperature=next;migrated=true}
       });
       if(!state.dayTitles||typeof state.dayTitles!=='object')state.dayTitles={};
       const hadGoals=Array.isArray(s.goals);
@@ -620,6 +1018,7 @@ function freshDraft(cat){
   draft=typeOf(cat).blank(cat);
   pendingTag='';
   imageError='';
+  tempTouched=false;
 }
 let focusSectionId=null;
 let sectionTagEdit=null,sectionRenaming=null;
@@ -851,6 +1250,11 @@ function readDraft(){
   }else if(hs&&ms)draft.durationMinutes=null;
   const n=$('newTag');
   if(n)pendingTag=n.value;
+  const temp=$('wxTemp');
+  if(temp){
+    const raw=String(temp.value||'').trim();
+    draft.temperature=raw===''?null:Number(raw);
+  }
 }
 function fillAreas(){
   const note=$('entryNote');
@@ -876,12 +1280,21 @@ function updateTimerReadout(){
   if(label==='—')out.removeAttribute('data-duration');
   else out.setAttribute('data-duration',label);
 }
-function select(k){readGoalNotes();sel=k;view=parse(k);picker=false;render()}
+function select(k){
+  readGoalNotes();
+  if($('entryForm'))readDraft();
+  if(k!==sel&&!editingId&&!tempTouched)draft.temperature=null;
+  sel=k;view=parse(k);picker=false;render();
+}
 function shift(n){const d=parse(sel);d.setDate(d.getDate()+n);select(key(d))}
 function openCategory(id){
   readGoalNotes();
   abandonNewImages();
   openGoal=null;
+  placeEditing=false;
+  placeQuery='';
+  placeResults=[];
+  placeStatus='';
   openCat=id;
   editingId=null;
   tagEdit=false;
@@ -893,6 +1306,10 @@ function openCategory(id){
 }
 function closeCategory(){
   abandonNewImages();
+  placeEditing=false;
+  placeQuery='';
+  placeResults=[];
+  placeStatus='';
   openCat=null;
   editingId=null;
   tagEdit=false;
@@ -906,6 +1323,7 @@ function editEntry(e){
   openCat=e.categoryId;
   editingId=e.id;
   draft=typeOf(catById(e.categoryId)).fromEntry(e);
+  tempTouched=true;
   pendingTag='';
   tagEdit=false;
   renamingTag=null;
@@ -1079,11 +1497,12 @@ function imageSection(){
 function entryCard(e){
   const type=typeOf(catById(e.categoryId));
   const editing=e.id===editingId;
+  const heading=type.id==='weather'?weatherHeading(e):(e.title||'Untitled');
   return h('article',{class:'entry-card'+(editing?' editing':''),'data-entry':e.id,onclick:ev=>{
     if(ev.target.closest('button'))return;
     editEntry(e);
   }},
-    h('div',{class:'row top-row'},h('strong',null,e.title||'Untitled'),h('span',{class:'muted sm'},fmt(e.date))),
+    h('div',{class:'row top-row'},h('strong',null,heading),h('span',{class:'muted sm'},fmt(e.date))),
     ...type.cardBits(e),
     h('div',{class:'entry-actions'},
       h('button',{type:'button',onclick:ev=>{ev.stopPropagation();editEntry(e)}},'Edit'),
@@ -1122,7 +1541,7 @@ function renderCatScreen(){
     h('p',{class:'watch',id:'tagLabel'},type.tagLabel),
     names.length?h('div',{class:'chips',id:'tagChips'},...names.map(chip)):h('p',{class:'muted sm',id:'noTags'},'No tags yet.'),
     h('div',{class:'tag-row'},
-      h('input',{id:'newTag',class:'field',value:pendingTag,placeholder:'New word, kept in this category','aria-label':'New word, kept in this category',autocomplete:'off',
+      h('input',{id:'newTag',class:'field',value:pendingTag,placeholder:type.tagPlaceholder||'New word, kept in this category','aria-label':type.tagPlaceholder||'New word, kept in this category',autocomplete:'off',
         onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addTag()}}}),
       h('button',{type:'button',class:'btn ghost',id:'addTag',onclick:addTag},'Add tag'),
       h('button',{type:'button',class:tagEdit?'btn':'btn ghost',id:'editTags','aria-pressed':tagEdit?'true':'false',onclick:()=>{
@@ -1153,18 +1572,25 @@ function renderCatScreen(){
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
+    type.id==='weather'?weatherPanel(cat):null,
     form,
     h('div',{class:'entry-list',id:'catEntries'},
       list.length?list.map(entryCard):h('p',{class:'muted',id:'catEmpty'},'Nothing written.')));
   fillAreas();
   if(focusTitle){
-    const el=$('entryTitle');
+    const el=$('entryTitle')||(!cat.place&&$('placeQuery'));
     if(el){el.focus();const n=el.value.length;if(el.setSelectionRange)el.setSelectionRange(n,n)}
     focusTitle=false;
   }
 }
 function entryPreview(e){
-  const timer=typeOf(catById(e.categoryId)).id==='timer';
+  const kind=typeOf(catById(e.categoryId)).id;
+  if(kind==='weather'){
+    return h('div',{class:'preview-block'},
+      h('p',{class:'preview-title wx-log'},weatherHeading(e)),
+      e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
+  }
+  const timer=kind==='timer';
   const dur=formatDuration(entryMinutes(e));
   const title=timer?(e.title||'Untitled'):(e.title||dur||'Untitled');
   const lines=[];
@@ -1478,6 +1904,7 @@ function catCard(c){
   }},
     h('div',{class:'row'},h('h3',null,c.name),h('button',{class:'x',type:'button','aria-label':`Delete ${c.name}`,onclick:()=>deleteCategory(c)},'Delete')),
     type.id==='notes'?null:h('p',{class:'muted sm'},type.label),
+    type.id==='weather'?h('div',{class:'wx-slot','data-wx-slot':c.id},weatherReadout(c)):null,
     list.length?list.map(entryPreview):h('p',{class:'muted'},'Nothing written for this day.'),
     h('p',{class:'accent sm open-hint'},'Open'));
 }
@@ -1493,6 +1920,7 @@ function renderCats(){
       const type=TYPES[newType]?newType:'notes';
       const cat={id:uid(),name:n,tags:[],type};
       if(type==='timer'){cat.sectionNames=['Notes'];cat.sectionTags={};}
+      if(type==='weather')cat.place=null;
       state.categories.push(cat);
       addingCat=false;
       newType='notes';
@@ -1602,6 +2030,8 @@ function render(){
   if(openGoal)renderGoalScreen();else{$('goalScreen').replaceChildren()}
   goalNotesFor=sel;
   hydrateImages(document);
+  ensureVisibleWeather();
+  prefillTemp();
 }
 $('dayTitle').addEventListener('input',e=>{
   const v=e.target.value.trim();
