@@ -1,7 +1,7 @@
 :root{--bg:#f3efe6;--surface:#fbf8f2;--ink:#1c1914;--muted:#6e675c;--line:#e2dacb;--accent:#2f5d45;--page:var(--bg)}
 *{box-sizing:border-box}[hidden]{display:none !important}body{margin:0;background-color:var(--page);background-image:var(--scene,none);background-size:cover;background-position:center top;background-attachment:fixed;color:var(--ink);font-family:Georgia,"Iowan Old Style","Times New Roman",serif}
 button,input,textarea{font:inherit;color:inherit;color-scheme:light}button{cursor:pointer;background:none;border:0}
-.wrap{max-width:64rem;margin:0 auto;padding:2.5rem 1.5rem}
+.wrap{width:min(1500px,90%);margin:0 auto;padding:2rem 0 3rem}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;margin-bottom:1.5rem}.grow{flex:1;min-width:0}
 .eyebrow{margin:0;font-size:.875rem;font-weight:500;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 .day-title{margin-top:.25rem;width:100%;background:transparent;border:0;outline:0;font-size:2.25rem;line-height:1.15;overflow-wrap:break-word}.day-title::placeholder{opacity:.4;color:var(--ink)}
@@ -9,7 +9,12 @@ button,input,textarea{font:inherit;color:inherit;color-scheme:light}button{curso
 .pill{height:2.75rem;padding:0 1rem;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:.875rem}
 .card{border:1px solid var(--line);border-radius:1rem;background:var(--surface);padding:1rem}.mt8{margin-top:2rem}.mt4{margin-top:1rem}
 h2{font-size:1.125rem;font-weight:normal;margin:0}h3{font-size:1.25rem;font-weight:normal;margin:0}
-.cat-grid{display:grid;grid-template-columns:1fr;gap:1rem}@media(min-width:640px){.cat-grid{grid-template-columns:1fr 1fr}}
+.home-block+.home-block{margin-top:1.75rem}
+.home-heading{font-size:1.7rem;margin:0 0 .85rem;line-height:1.15}
+.cat-grid,.goal-grid{display:grid;grid-template-columns:1fr;gap:1rem}
+@media(min-width:640px){.cat-grid{grid-template-columns:1fr 1fr}}
+@media(min-width:720px){.goal-grid{grid-template-columns:1fr 1fr}}
+@media(min-width:1100px){.goal-grid{grid-template-columns:1fr 1fr 1fr}}
 .new-cat{min-height:10rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5rem;border:1px dashed var(--accent);border-radius:1rem;color:var(--accent);background:var(--surface);font-size:1rem}
 .new-cat .plus{font-size:2rem;line-height:1}
 .field{display:block;width:100%;border:1px solid var(--line);border-radius:.6rem;background:var(--bg);padding:.55rem .7rem;margin-top:.5rem;outline-color:var(--accent)}
@@ -38,7 +43,8 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .month-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem;margin-top:.75rem}
 .month-grid .month{height:2.75rem;border:1px solid var(--line);border-radius:.6rem;background:var(--bg)}
 .month-grid .month.sel{background:var(--accent);color:var(--on-accent, var(--surface));border-color:var(--accent)}
-.cat-screen{max-width:40rem;margin:0 auto}
+.cat-screen{margin:0}
+.cat-card{min-height:12.5rem}
 .cat-top{display:flex;justify-content:space-between;align-items:center;gap:.75rem}
 .cat-tools{display:flex;align-items:center;gap:.75rem}
 .back{color:var(--accent);min-height:2.75rem;padding:0 .15rem;font-size:1rem}
@@ -84,6 +90,19 @@ textarea.dream{min-height:6.5rem}
 .entry-actions button{color:var(--muted);font-size:.8rem;min-height:2.75rem;padding:0 .45rem}
 .top-row{align-items:baseline}
 .cat-card{cursor:pointer;text-align:left}
+.goal-card{text-align:left}
+.goal-title{font:inherit;font-size:1.25rem;text-align:left;color:inherit;padding:0;min-height:2.75rem}
+textarea.goal-note{min-height:6.5rem;resize:vertical}
+.week{width:100%;border-collapse:separate;border-spacing:0 .2rem;margin-top:.65rem}
+.week th{font-size:.72rem;font-weight:normal;color:var(--muted);padding:.25rem .05rem;line-height:1.2}
+.week th.today{color:var(--on-accent, var(--surface));background:var(--accent);border-radius:.4rem}
+.week th.col-sel:not(.today){color:var(--accent);text-decoration:underline}
+.week .item-name{text-align:left;font-size:.95rem;padding:.15rem .4rem .15rem 0;width:32%;overflow-wrap:anywhere}
+.week td.today{background:color-mix(in srgb, var(--accent) 16%, transparent);border-radius:.35rem}
+.check{width:1.9rem;height:1.9rem;margin:0 auto;border:1px solid var(--line);border-radius:.4rem;background:var(--bg);color:var(--on-accent, var(--surface));font-size:1rem;line-height:1;display:flex;align-items:center;justify-content:center}
+.check.on{background:var(--accent);border-color:var(--accent)}
+.item-row{display:flex;gap:.4rem;align-items:center;margin-top:.45rem}
+.item-row .field{flex:1;margin-top:0}
 .preview{margin-top:.35rem}
 .preview-block{margin-top:.5rem}.preview-title{margin:0}.preview-dur,.preview-section,.preview-tags{margin:.12rem 0 0}
 .open-hint{margin:.7rem 0 0}
@@ -168,6 +187,11 @@ html[data-look="wood"] .new-cat,html[data-look="vine"] .new-cat{color:var(--acce
 html[data-look="earth"] .new-cat{color:var(--accent)}
 html[data-look="water"] .new-cat{color:var(--accent)}
 
+html[data-look="wood"] .home-heading,html[data-look="vine"] .home-heading{display:table;background:rgba(246,239,226,.92);color:var(--ink);padding:.15rem .7rem;border-radius:.4rem}
+html[data-look="vine"] .home-heading{background:rgba(244,248,236,.9)}
+html[data-look="water"] .home-heading{display:table;background:rgba(255,252,247,.82);padding:.1rem .7rem;border-radius:.4rem}
+html[data-look="earth"] .home-heading{text-shadow:0 2px 10px rgba(0,0,0,.75)}
+html[data-look="retro"] .home-heading{color:#e7ffc4;text-shadow:0 2px 0 #06210c}
 html[data-look="wood"] .top .grow,html[data-look="wood"] .cat-top,html[data-look="wood"] .cat-heading{background:rgba(246,239,226,.9);border-radius:.4rem}
 html[data-look="wood"] .top .grow{padding:.45rem .75rem .6rem}
 html[data-look="wood"] .cat-heading{display:table;padding:.15rem .6rem;margin-top:.45rem}
@@ -185,11 +209,11 @@ html[data-look="water"] .field,html[data-look="water"] .year-input,html[data-loo
 html[data-look="retro"] .card,html[data-look="retro"] .entry-card,html[data-look="retro"] .day-block,html[data-look="retro"] .new-cat,html[data-look="retro"] .look-opt,html[data-look="retro"] .field,html[data-look="retro"] .pill,html[data-look="retro"] .btn,html[data-look="retro"] .circle,html[data-look="retro"] .chip,html[data-look="retro"] .thumb-open{border-radius:.25rem}
 html[data-look="retro"] .card,html[data-look="retro"] .entry-card,html[data-look="retro"] .day-block,html[data-look="retro"] .new-cat{background:#8ae04f;color:#14240f;border:3px solid #0e3012;box-shadow:inset 3px 3px 0 #d7ff9e,inset -3px -3px 0 #2f7a18,4px 4px 0 #041a06}
 html[data-look="retro"] .card .muted,html[data-look="retro"] .entry-card .muted,html[data-look="retro"] .day-block .muted,html[data-look="retro"] .look-panel .muted{color:#245018}
-html[data-look="retro"] .card > h2,html[data-look="retro"] .look-head,html[data-look="retro"] .card > .cal-head,html[data-look="retro"] .cat-card > .row:first-child,html[data-look="retro"] .entry-card > .top-row,html[data-look="retro"] #newCatForm > h3{background:#123d16;color:#e4ff8a;margin:-1rem -1rem .75rem;padding:.55rem .85rem}
+html[data-look="retro"] .card > h2,html[data-look="retro"] .look-head,html[data-look="retro"] .card > .cal-head,html[data-look="retro"] .cat-card > .row:first-child,html[data-look="retro"] .goal-card > .row:first-child,html[data-look="retro"] .entry-card > .top-row,html[data-look="retro"] #newCatForm > h3,html[data-look="retro"] #newGoalForm > h3{background:#123d16;color:#e4ff8a;margin:-1rem -1rem .75rem;padding:.55rem .85rem}
 html[data-look="retro"] .day-item > .top-row{background:#123d16;color:#e4ff8a;margin:-.75rem -.75rem .55rem;padding:.5rem .75rem}
 html[data-look="retro"] .cat-heading{background:#123d16;color:#e4ff8a;padding:.4rem .7rem}
-html[data-look="retro"] .card > h2,html[data-look="retro"] .cat-card > .row:first-child h3,html[data-look="retro"] .entry-card > .top-row,html[data-look="retro"] .day-item > .top-row,html[data-look="retro"] #newCatForm > h3,html[data-look="retro"] .look-head h2{color:#e4ff8a}
-html[data-look="retro"] .cat-card > .row:first-child .x,html[data-look="retro"] .entry-card > .top-row .muted,html[data-look="retro"] .day-item > .top-row .muted{color:#d6ff8a}
+html[data-look="retro"] .card > h2,html[data-look="retro"] .cat-card > .row:first-child h3,html[data-look="retro"] .goal-card > .row:first-child h3,html[data-look="retro"] .goal-title,html[data-look="retro"] .entry-card > .top-row,html[data-look="retro"] .day-item > .top-row,html[data-look="retro"] #newCatForm > h3,html[data-look="retro"] #newGoalForm > h3,html[data-look="retro"] .look-head h2{color:#e4ff8a}
+html[data-look="retro"] .cat-card > .row:first-child .x,html[data-look="retro"] .goal-card > .row:first-child .x,html[data-look="retro"] .entry-card > .top-row .muted,html[data-look="retro"] .day-item > .top-row .muted{color:#d6ff8a}
 html[data-look="retro"] .look-head .btn.ghost{background:#e4e0d8;color:#111;border-color:#111}
 html[data-look="retro"] .look-opt{color:#14240f;background:#d6ff9a}
 html[data-look="retro"] .cal-head .month-btn,html[data-look="retro"] .cal-head .lg{color:#e4ff8a}

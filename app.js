@@ -301,11 +301,39 @@ function applyAppearance(){
   }else root.style.setProperty('--scene','none');
   if(meta)meta.setAttribute('content',s.accent);
 }
+const GOAL_TYPES={checks:{id:'checks',label:'Daily check-boxes'}};
+function normalizeGoal(g){
+  const copy=Object.assign({},g);
+  copy.id=typeof g.id==='string'&&g.id?g.id:uid();
+  copy.name=typeof g.name==='string'?g.name:'';
+  copy.type=GOAL_TYPES[g.type]?g.type:'checks';
+  const items=(Array.isArray(g.items)?g.items:[]).filter(it=>it&&typeof it==='object').map(it=>{
+    const item=Object.assign({},it);
+    item.id=typeof it.id==='string'&&it.id?it.id:uid();
+    item.name=typeof it.name==='string'?it.name:'';
+    return item;
+  });
+  copy.items=items;
+  copy.tags=tagList(g.tags);
+  const ids=new Set(items.map(it=>it.id));
+  const days={};
+  const raw=g.days&&typeof g.days==='object'&&!Array.isArray(g.days)?g.days:{};
+  Object.keys(raw).forEach(k=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(k)||!raw[k]||typeof raw[k]!=='object'||Array.isArray(raw[k]))return;
+    const d=Object.assign({},raw[k]);
+    d.note=typeof raw[k].note==='string'?raw[k].note:'';
+    d.tags=tagList(raw[k].tags);
+    d.checks=tagList(raw[k].checks).filter(id=>ids.has(id));
+    days[k]=d;
+  });
+  copy.days=days;
+  return copy;
+}
 function load(){
   try{
     const s=JSON.parse(localStorage.getItem(KEY));
     if(s&&Array.isArray(s.categories)){
-      const state=Object.assign({categories:[],entries:[],dayTitles:{},look:'paper',themes:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}},s);
+      const state=Object.assign({categories:[],entries:[],dayTitles:{},goals:[],look:'paper',themes:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}},s);
       let migrated=false;
       state.categories.forEach(c=>{
         if(!Array.isArray(c.tags))c.tags=[];
@@ -349,6 +377,10 @@ function load(){
         migrated=true;
       });
       if(!state.dayTitles||typeof state.dayTitles!=='object')state.dayTitles={};
+      const hadGoals=Array.isArray(s.goals);
+      const nextGoals=(Array.isArray(state.goals)?state.goals:[]).filter(g=>g&&typeof g==='object').map(normalizeGoal);
+      if(!hadGoals||JSON.stringify(state.goals)!==JSON.stringify(nextGoals))migrated=true;
+      state.goals=nextGoals;
       state.themes=(Array.isArray(state.themes)?state.themes:[]).filter(t=>t&&t.id&&t.name&&t.skin).map(t=>({id:String(t.id),name:String(t.name),skin:normalizeSkin(t.skin)}));
       state.skin=state.skin&&typeof state.skin==='object'?normalizeSkin(state.skin):null;
       const typing=state.typing&&typeof state.typing==='object'?state.typing:{};
@@ -368,14 +400,17 @@ function load(){
       return state;
     }
   }catch(e){}
-  return {categories:[],entries:[],dayTitles:{},look:'paper',themes:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}};
+  return {categories:[],entries:[],dayTitles:{},goals:[],look:'paper',themes:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}};
 }
 let state=load();
 applyAppearance();
-const save=()=>localStorage.setItem(KEY,JSON.stringify(state));
+let goalNotesFor=null;
+const save=()=>{readGoalNotes();localStorage.setItem(KEY,JSON.stringify(state));};
 if(state._migrated){delete state._migrated;save()}
 let sel=key(new Date()),view=parse(sel),addingCat=false,newType='notes';
-let openCat=null,editingId=null,tagEdit=false,renamingTag=null,focusTitle=false;
+let openCat=null,openGoal=null,editingId=null,tagEdit=false,renamingTag=null,focusTitle=false;
+let addingGoal=false,newGoalType='checks',goalTagEdit=null,goalRenaming=null,focusItemId=null;
+const pendingGoalTags={};
 let draft=TYPES.notes.blank(),pendingTag='',imageError='';
 const sessionNew=new Set();
 const expanded=new Set();
@@ -841,10 +876,12 @@ function updateTimerReadout(){
   if(label==='—')out.removeAttribute('data-duration');
   else out.setAttribute('data-duration',label);
 }
-function select(k){sel=k;view=parse(k);picker=false;render()}
+function select(k){readGoalNotes();sel=k;view=parse(k);picker=false;render()}
 function shift(n){const d=parse(sel);d.setDate(d.getDate()+n);select(key(d))}
 function openCategory(id){
+  readGoalNotes();
   abandonNewImages();
+  openGoal=null;
   openCat=id;
   editingId=null;
   tagEdit=false;
@@ -1145,6 +1182,290 @@ function entryPreview(e){
     ...lines,
     !timer&&e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
 }
+const WEEKDAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function goalById(id){return (state.goals||[]).find(g=>g.id===id)}
+function weekDates(dateKey){
+  const d=parse(dateKey);
+  const start=new Date(d.getFullYear(),d.getMonth(),d.getDate()-d.getDay());
+  const out=[];
+  for(let i=0;i<7;i++)out.push(key(new Date(start.getFullYear(),start.getMonth(),start.getDate()+i)));
+  return out;
+}
+function dayOf(g,date){
+  const d=g.days&&g.days[date];
+  if(!d)return {note:'',tags:[],checks:[]};
+  return {note:typeof d.note==='string'?d.note:'',tags:tagList(d.tags),checks:tagList(d.checks)};
+}
+function ensureDay(g,date){
+  if(!g.days||typeof g.days!=='object'||Array.isArray(g.days))g.days={};
+  if(!g.days[date]||typeof g.days[date]!=='object')g.days[date]={note:'',tags:[],checks:[]};
+  const d=g.days[date];
+  if(typeof d.note!=='string')d.note='';
+  if(!Array.isArray(d.tags))d.tags=[];
+  if(!Array.isArray(d.checks))d.checks=[];
+  return d;
+}
+function readGoalNotes(){
+  if(!goalNotesFor||goalNotesFor!==sel)return;
+  document.querySelectorAll('[data-goal-note]').forEach(el=>{
+    const g=goalById(el.getAttribute('data-goal-note'));
+    if(g)ensureDay(g,sel).note=el.value;
+  });
+  document.querySelectorAll('[data-goal-tag]').forEach(el=>{pendingGoalTags[el.getAttribute('data-goal-tag')]=el.value});
+}
+function openGoalScreen(id){
+  readGoalNotes();
+  openGoal=id;
+  openCat=null;
+  addingGoal=false;
+  goalTagEdit=null;
+  goalRenaming=null;
+  render();
+}
+function closeGoal(){
+  readGoalNotes();
+  openGoal=null;
+  goalTagEdit=null;
+  goalRenaming=null;
+  render();
+}
+function deleteGoal(g){
+  if(!confirm(`Delete goal "${g.name||'Untitled'}"?`))return;
+  readGoalNotes();
+  state.goals=state.goals.filter(x=>x.id!==g.id);
+  if(openGoal===g.id)openGoal=null;
+  save();
+  render();
+}
+function toggleCheck(goalId,itemId,date){
+  readGoalNotes();
+  const g=goalById(goalId);
+  if(!g)return;
+  const day=ensureDay(g,date);
+  const i=day.checks.indexOf(itemId);
+  if(i>=0)day.checks.splice(i,1);else day.checks.push(itemId);
+  save();
+  render();
+}
+function addGoalItem(goalId){
+  readGoalNotes();
+  const g=goalById(goalId);
+  if(!g)return;
+  const item={id:uid(),name:''};
+  g.items=g.items||[];
+  g.items.push(item);
+  focusItemId=item.id;
+  save();
+  render();
+}
+function removeGoalItem(goalId,itemId){
+  readGoalNotes();
+  const g=goalById(goalId);
+  if(!g)return;
+  g.items=(g.items||[]).filter(it=>it.id!==itemId);
+  Object.values(g.days||{}).forEach(d=>{if(d&&Array.isArray(d.checks))d.checks=d.checks.filter(id=>id!==itemId)});
+  save();
+  render();
+}
+function addGoalTag(goalId){
+  readGoalNotes();
+  const g=goalById(goalId);
+  if(!g)return;
+  const raw=String(pendingGoalTags[goalId]||'').trim();
+  pendingGoalTags[goalId]='';
+  if(!raw)return;
+  g.tags=tagList(g.tags);
+  if(!g.tags.some(t=>same(t,raw)))g.tags.push(raw);
+  const canonical=g.tags.find(t=>same(t,raw));
+  const day=ensureDay(g,sel);
+  if(canonical&&!day.tags.some(t=>same(t,canonical)))day.tags.push(canonical);
+  save();
+  render();
+}
+function toggleGoalTag(goalId,name){
+  readGoalNotes();
+  const g=goalById(goalId);
+  if(!g)return;
+  const day=ensureDay(g,sel);
+  const i=day.tags.findIndex(t=>same(t,name));
+  if(i>=0)day.tags.splice(i,1);else day.tags.push(name);
+  save();
+  render();
+}
+function deleteGoalTag(goalId,name){
+  readGoalNotes();
+  const g=goalById(goalId);
+  if(!g)return;
+  g.tags=tagList(g.tags).filter(t=>!same(t,name));
+  Object.values(g.days||{}).forEach(d=>{if(d&&Array.isArray(d.tags))d.tags=d.tags.filter(t=>!same(t,name))});
+  if(goalRenaming&&same(goalRenaming,name))goalRenaming=null;
+  save();
+  render();
+}
+function commitGoalRename(goalId,oldName,raw){
+  if(goalTagEdit!==goalId||!goalRenaming||!same(goalRenaming,oldName))return;
+  goalRenaming=null;
+  const name=String(raw||'').trim();
+  const g=goalById(goalId);
+  if(!g||!name||name===oldName){render();return}
+  g.tags=tagList(g.tags);
+  const clash=g.tags.find(t=>same(t,name)&&!same(t,oldName));
+  const next=clash||name;
+  const idx=g.tags.findIndex(t=>same(t,oldName));
+  if(clash)g.tags=g.tags.filter(t=>!same(t,oldName));
+  else if(idx>=0)g.tags[idx]=next;
+  else g.tags.push(next);
+  const rewrite=list=>[...new Set(tagList(list).map(t=>same(t,oldName)?next:t))];
+  Object.values(g.days||{}).forEach(d=>{if(d)d.tags=rewrite(d.tags)});
+  save();
+  render();
+}
+function goalChip(g,tag){
+  const on=dayOf(g,sel).tags.some(t=>same(t,tag));
+  const editing=goalTagEdit===g.id;
+  if(editing&&goalRenaming&&same(goalRenaming,tag)){
+    const inp=h('input',{class:'chip-input','aria-label':`Rename ${tag}`,value:tag,
+      onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();commitGoalRename(g.id,tag,ev.target.value)}
+        if(ev.key==='Escape'){goalRenaming=null;render()}
+      },
+      onblur:ev=>commitGoalRename(g.id,tag,ev.target.value)});
+    setTimeout(()=>{inp.focus();inp.select()},0);
+    return h('span',{class:'chip editing','data-tag':tag},inp);
+  }
+  const text=h('button',{type:'button',class:'chip-text',onclick:()=>{
+    if(editing){readGoalNotes();goalRenaming=tag;render()}
+    else toggleGoalTag(g.id,tag);
+  }},tag);
+  const kids=[text];
+  if(editing)kids.push(h('button',{type:'button',class:'chip-x','aria-label':`Delete tag ${tag}`,onclick:ev=>{ev.stopPropagation();deleteGoalTag(g.id,tag)}},'×'));
+  return h('span',{class:'chip'+(on?' on':'')+(editing?' edit':''),'data-tag':tag,'data-on':on?'true':'false'},...kids);
+}
+function goalTagBox(g){
+  const day=dayOf(g,sel);
+  const names=[...tagList(g.tags)];
+  day.tags.forEach(t=>{if(!names.some(n=>same(n,t)))names.push(t)});
+  const editing=goalTagEdit===g.id;
+  return h('div',{class:'goal-tags','data-goal-tags':g.id},
+    h('p',{class:'watch'},'Tags you are watching'),
+    names.length?h('div',{class:'chips'},...names.map(t=>goalChip(g,t))):h('p',{class:'muted sm'},'No tags yet.'),
+    h('div',{class:'tag-row'},
+      h('input',{class:'field','data-goal-tag':g.id,value:pendingGoalTags[g.id]||'',placeholder:'New word, kept for this goal','aria-label':'New word, kept for this goal',autocomplete:'off',
+        onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addGoalTag(g.id)}},
+        oninput:ev=>{pendingGoalTags[g.id]=ev.target.value}}),
+      h('button',{type:'button',class:'btn ghost',onclick:()=>addGoalTag(g.id)},'Add tag'),
+      h('button',{type:'button',class:editing?'btn':'btn ghost','aria-pressed':editing?'true':'false',onclick:()=>{
+        readGoalNotes();
+        if(goalTagEdit===g.id){goalTagEdit=null;goalRenaming=null}else{goalTagEdit=g.id;goalRenaming=null}
+        render();
+      }},editing?'Done':'Edit')));
+}
+function weekTable(g){
+  const today=key(new Date());
+  const dates=weekDates(sel);
+  const head=h('tr',null,
+    h('th',{scope:'col'}),
+    ...dates.map((date,i)=>h('th',{scope:'col',class:[date===today&&'today',date===sel&&'col-sel'].filter(Boolean).join(' '),'data-col':date},
+      WEEKDAYS[i],h('br'),String(parse(date).getDate()))));
+  const rows=(g.items||[]).map(item=>h('tr',{'data-item':item.id},
+    h('th',{scope:'row',class:'item-name'},(item.name||'').trim()||'Item'),
+    ...dates.map(date=>{
+      const on=dayOf(g,date).checks.includes(item.id);
+      const todayCol=date===today;
+      return h('td',{class:todayCol?'today':''},
+        h('button',{type:'button',class:'check'+(on?' on':''),'aria-pressed':on?'true':'false','aria-label':`${(item.name||'').trim()||'Item'} on ${fmt(date)}`,'data-date':date,onclick:ev=>{
+          ev.stopPropagation();
+          toggleCheck(g.id,item.id,date);
+        }},on?'✓':''));
+    })));
+  return h('table',{class:'week'},h('thead',null,head),h('tbody',null,
+    rows.length?rows:h('tr',null,h('td',{colspan:'8',class:'muted sm'},'No items yet.'))));
+}
+function goalNotes(g){
+  const day=dayOf(g,sel);
+  return h('div',{class:'goal-notes'},
+    h('label',{class:'lbl'},`Notes · ${fmt(sel)}`,h('textarea',{class:'field goal-note','data-goal-note':g.id,value:day.note,'aria-label':`Notes for ${fmt(sel)}`,oninput:ev=>{
+      ensureDay(g,sel).note=ev.target.value;
+      save();
+    }})),
+    goalTagBox(g));
+}
+function renderGoals(){
+  const root=$('goals');
+  if(!root)return;
+  const cards=(state.goals||[]).map(g=>h('article',{class:'card goal-card','data-goal':g.id,'data-type':g.type||'checks'},
+    h('div',{class:'row'},
+      h('h3',null,h('button',{type:'button',class:'goal-title',onclick:()=>openGoalScreen(g.id)},g.name||'Untitled')),
+      h('button',{class:'x',type:'button','aria-label':`Delete ${g.name||'goal'}`,onclick:()=>deleteGoal(g)},'Delete')),
+    h('p',{class:'muted sm goal-type'},(GOAL_TYPES[g.type]||GOAL_TYPES.checks).label),
+    weekTable(g),
+    goalNotes(g)));
+  root.replaceChildren(...cards);
+  if(addingGoal){
+    const inp=h('input',{class:'field',placeholder:'Health, practice, home…','aria-label':'Name this goal'});
+    const f=h('form',{class:'card',id:'newGoalForm',onsubmit:ev=>{
+      ev.preventDefault();
+      const n=inp.value.trim();
+      if(!n)return;
+      const type=GOAL_TYPES[newGoalType]?newGoalType:'checks';
+      const goal={id:uid(),name:n,type,items:[],tags:[],days:{}};
+      state.goals.push(goal);
+      addingGoal=false;
+      newGoalType='checks';
+      openGoal=goal.id;
+      openCat=null;
+      save();
+      render();
+    }},
+      h('h3',null,'New goal'),inp,
+      h('p',{class:'watch'},'Type'),
+      h('div',{class:'type-row',id:'goalTypePicker'},...Object.values(GOAL_TYPES).map(t=>
+        h('button',{type:'button',class:'type-opt'+(newGoalType===t.id?' on':''),'data-type':t.id,'aria-pressed':newGoalType===t.id?'true':'false',onclick:()=>{
+          newGoalType=t.id;
+          document.querySelectorAll('#goalTypePicker .type-opt').forEach(b=>{
+            const on=b.getAttribute('data-type')===t.id;
+            b.classList.toggle('on',on);
+            b.setAttribute('aria-pressed',on?'true':'false');
+          });
+        }},t.label))),
+      h('div',{class:'row'},h('button',{class:'btn',type:'submit'},'Add goal'),h('button',{class:'btn ghost',type:'button',onclick:()=>{addingGoal=false;newGoalType='checks';render()}},'Cancel')));
+    root.append(f);
+    setTimeout(()=>inp.focus(),0);
+  }else root.append(h('button',{class:'new-cat',type:'button',id:'newGoal',onclick:()=>{addingGoal=true;newGoalType='checks';render()}},h('span',{class:'plus'},'+'),'New goal'));
+}
+function renderGoalScreen(){
+  const g=goalById(openGoal);
+  const root=$('goalScreen');
+  if(!g){root.replaceChildren();return}
+  root.replaceChildren(
+    h('div',{class:'cat-top'},
+      h('button',{type:'button',class:'back',id:'goalBack',onclick:closeGoal},'Back'),
+      h('p',{class:'muted',id:'goalDate'},fmt(sel))),
+    h('label',{class:'lbl'},'Name',h('input',{id:'goalName',class:'field',value:g.name,'aria-label':'Goal name',autocomplete:'off',oninput:ev=>{
+      g.name=ev.target.value;
+      document.querySelectorAll(`[data-goal="${g.id}"] .goal-title`).forEach(b=>{b.textContent=g.name||'Untitled'});
+      save();
+    }})),
+    h('p',{class:'muted sm goal-type'},(GOAL_TYPES[g.type]||GOAL_TYPES.checks).label),
+    h('div',{class:'actions'},h('button',{type:'button',class:'btn ghost',onclick:()=>deleteGoal(g)},'Delete goal')),
+    h('h2',{class:'cat-heading'},'Items'),
+    ...(g.items||[]).map(item=>h('div',{class:'item-row','data-item':item.id},
+      h('input',{class:'field','data-item-name':item.id,value:item.name,placeholder:'Drinking water, moving…','aria-label':'Item name',autocomplete:'off',oninput:ev=>{
+        item.name=ev.target.value;
+        const label=(item.name||'').trim()||'Item';
+        document.querySelectorAll(`tr[data-item="${item.id}"] .item-name`).forEach(th=>{th.textContent=label});
+        save();
+      }}),
+      h('button',{type:'button',class:'section-remove','aria-label':'Remove item',onclick:()=>removeGoalItem(g.id,item.id)},'Remove'))),
+    h('button',{type:'button',class:'btn ghost',id:'addGoalItem',onclick:()=>addGoalItem(g.id)},'Add item'),
+    weekTable(g),
+    goalNotes(g));
+  if(focusItemId){
+    const el=document.querySelector(`[data-item-name="${focusItemId}"]`);
+    if(el)el.focus();
+    focusItemId=null;
+  }
+}
 function catCard(c){
   const list=dayEntries(sel,c.id);
   const type=typeOf(c);
@@ -1222,6 +1543,9 @@ function renderCal(){
   }else box.replaceChildren();
   const g=$('calGrid'),y=view.getFullYear(),m=view.getMonth(),first=new Date(y,m,1).getDay(),n=new Date(y,m+1,0).getDate(),today=key(new Date());
   const has=new Set([...state.entries.map(e=>e.date),...Object.keys(state.dayTitles)]);
+  (state.goals||[]).forEach(g=>Object.entries(g.days||{}).forEach(([k,d])=>{
+    if(d&&((d.note||'').trim()||(d.tags||[]).length||(d.checks||[]).length))has.add(k);
+  }));
   const cells=['S','M','T','W','T','F','S'].map(d=>h('div',{class:'dow'},d));
   for(let i=0;i<first;i++)cells.push(h('div'));
   for(let d=1;d<=n;d++){
@@ -1262,16 +1586,21 @@ function renderDays(){
   }));
 }
 function render(){
+  readGoalNotes();
   if(openCat&&!currentCat())openCat=null;
-  const screen=!!openCat;
+  if(openGoal&&!goalById(openGoal))openGoal=null;
+  const screen=!!(openCat||openGoal);
   $('top').hidden=screen;
   $('home').hidden=screen;
-  $('catScreen').hidden=!screen;
+  $('catScreen').hidden=!openCat;
+  $('goalScreen').hidden=!openGoal;
   $('dateLabel').textContent=fmt(sel);
   const t=$('dayTitle');
   if(t&&document.activeElement!==t)t.value=state.dayTitles[sel]||'';
-  renderCats();renderCal();renderDays();
-  if(screen)renderCatScreen();else{$('catScreen').replaceChildren();$('catScreen').removeAttribute('data-type')}
+  renderGoals();renderCats();renderCal();renderDays();
+  if(openCat)renderCatScreen();else{$('catScreen').replaceChildren();$('catScreen').removeAttribute('data-type')}
+  if(openGoal)renderGoalScreen();else{$('goalScreen').replaceChildren()}
+  goalNotesFor=sel;
   hydrateImages(document);
 }
 $('dayTitle').addEventListener('input',e=>{
