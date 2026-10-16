@@ -48,7 +48,10 @@ function formatDuration(mins){
 function entryStart(e){return (e&&(e.timerStart||e.sleepStart))||''}
 function entryEnd(e){return (e&&(e.timerEnd||e.sleepEnd))||''}
 function newSection(name,text,title){
-  return {id:uid(),name:typeof name==='string'?name:'',title:typeof title==='string'?title:'',text:typeof text==='string'?text:''};
+  return {id:uid(),name:typeof name==='string'?name:'',title:typeof title==='string'?title:'',text:typeof text==='string'?text:'',tags:[]};
+}
+function tagList(list){
+  return (Array.isArray(list)?list:[]).filter(t=>typeof t==='string');
 }
 function sectionsFromNames(names){
   const list=Array.isArray(names)?names:['Notes'];
@@ -71,17 +74,20 @@ function normalizeSections(list){
     id:typeof s.id==='string'&&s.id?s.id:uid(),
     name:typeof s.name==='string'?s.name:'',
     title:typeof s.title==='string'?s.title:'',
-    text:typeof s.text==='string'?s.text:''
+    text:typeof s.text==='string'?s.text:'',
+    tags:tagList(s.tags)
   }));
 }
 function sectionBlocks(list){
-  return (list||[]).filter(s=>(s.text||'').trim()||(s.title||'').trim()).map(s=>{
+  return (list||[]).filter(s=>(s.text||'').trim()||(s.title||'').trim()||tagList(s.tags).length).map(s=>{
     const name=(s.name||'').trim()||'Section';
     const title=(s.title||'').trim();
     const text=(s.text||'').trim();
+    const tags=tagList(s.tags);
     return h('div',{class:'labeled'},
       h('p',{class:'kicker section-kicker','data-section-name':name},name),
       title?h('p',{class:'section-heading','data-section-title':title},title):null,
+      tags.length?h('p',{class:'accent sm tags-line section-tags-line'},tags.join(' · ')):null,
       text?h('p',{class:'note-text'},text):null);
   });
 }
@@ -146,14 +152,14 @@ const TYPES={
       };
     },
     hasContent(d){
-      const written=(d.sections||[]).some(s=>(s.text||'').trim()||(s.title||'').trim());
+      const written=(d.sections||[]).some(s=>(s.text||'').trim()||(s.title||'').trim()||tagList(s.tags).length);
       return !!(d.title.trim()||written||(d.tags||[]).length||(d.images||[]).length||(d.timerStart&&d.timerEnd)||(Number.isFinite(d.durationMinutes)&&d.durationMinutes>0));
     },
     write(entry,d){
       entry.title=d.title.trim();
       entry.tags=[...d.tags];
       entry.images=[...(d.images||[])];
-      entry.sections=normalizeSections(d.sections).map(s=>({id:s.id,name:s.name.trim(),title:(s.title||'').trim(),text:s.text.trim()}));
+      entry.sections=normalizeSections(d.sections).map(s=>({id:s.id,name:s.name.trim(),title:(s.title||'').trim(),text:s.text.trim(),tags:tagList(s.tags).map(t=>t.trim()).filter(Boolean)}));
       entry.note=sectionText(entry.sections,'notes');
       entry.dreams=sectionText(entry.sections,'dreams');
       entry.timerStart=d.timerStart||'';
@@ -310,6 +316,11 @@ function load(){
         if(c.type==='timer'){
           if(Array.isArray(c.sectionNames))c.sectionNames=c.sectionNames.map(n=>String(n));
           else if(wasSleep){c.sectionNames=['Dreams','Notes'];migrated=true}
+          const raw=c.sectionTags;
+          const next={};
+          if(raw&&typeof raw==='object'&&!Array.isArray(raw))Object.keys(raw).forEach(k=>{next[String(k)]=tagList(raw[k])});
+          if(JSON.stringify(raw)!==JSON.stringify(next))migrated=true;
+          c.sectionTags=next;
         }
       });
       state.entries.forEach(e=>{
@@ -575,6 +586,29 @@ function freshDraft(cat){
   imageError='';
 }
 let focusSectionId=null;
+let sectionTagEdit=null,sectionRenaming=null;
+const pendingSectionTags={};
+function sectionTagBucket(cat,name,create){
+  if(!cat.sectionTags||typeof cat.sectionTags!=='object'||Array.isArray(cat.sectionTags))cat.sectionTags={};
+  const key=Object.keys(cat.sectionTags).find(k=>same(k,name));
+  if(key!==undefined)return key;
+  if(!create)return null;
+  cat.sectionTags[name]=[];
+  return name;
+}
+function moveSectionTags(oldName,newName){
+  const cat=currentCat();
+  if(!cat||oldName===newName)return;
+  const oldKey=sectionTagBucket(cat,oldName,false);
+  if(oldKey==null)return;
+  const still=(draft.sections||[]).some(sec=>same(sec.name,oldName));
+  if(still)return;
+  const list=cat.sectionTags[oldKey];
+  delete cat.sectionTags[oldKey];
+  const clash=sectionTagBucket(cat,newName,false);
+  if(clash!=null)list.forEach(t=>{if(!cat.sectionTags[clash].some(m=>same(m,t)))cat.sectionTags[clash].push(t)});
+  else cat.sectionTags[newName]=list;
+}
 function rememberSections(){
   const cat=currentCat();
   if(!cat||typeOf(cat).id!=='timer')return;
@@ -606,13 +640,134 @@ function removeSection(id){
   rememberSections();
   render();
 }
+function clearSectionTagUi(){
+  sectionTagEdit=null;
+  sectionRenaming=null;
+  Object.keys(pendingSectionTags).forEach(k=>delete pendingSectionTags[k]);
+}
+function toggleSectionTag(sectionId,name){
+  readDraft();
+  const s=(draft.sections||[]).find(x=>x.id===sectionId);
+  if(!s)return;
+  s.tags=tagList(s.tags);
+  const i=s.tags.findIndex(t=>same(t,name));
+  if(i>=0)s.tags.splice(i,1);else s.tags.push(name);
+  render();
+}
+function addSectionTag(sectionId){
+  readDraft();
+  const s=(draft.sections||[]).find(x=>x.id===sectionId);
+  const cat=currentCat();
+  if(!s||!cat)return;
+  const raw=String(pendingSectionTags[sectionId]||'').trim();
+  pendingSectionTags[sectionId]='';
+  if(!raw)return;
+  const key=sectionTagBucket(cat,s.name,true);
+  if(!cat.sectionTags[key].some(t=>same(t,raw)))cat.sectionTags[key].push(raw);
+  const canonical=cat.sectionTags[key].find(t=>same(t,raw));
+  s.tags=tagList(s.tags);
+  if(canonical&&!s.tags.some(t=>same(t,canonical)))s.tags.push(canonical);
+  save();
+  render();
+}
+function deleteSectionTag(sectionName,name){
+  readDraft();
+  const cat=currentCat();
+  if(!cat)return;
+  const key=sectionTagBucket(cat,sectionName,false);
+  if(key!=null)cat.sectionTags[key]=cat.sectionTags[key].filter(t=>!same(t,name));
+  const strip=list=>tagList(list).filter(t=>!same(t,name));
+  state.entries.forEach(e=>{
+    if(e.categoryId!==cat.id||!Array.isArray(e.sections))return;
+    e.sections.forEach(sec=>{if(same(sec.name,sectionName))sec.tags=strip(sec.tags)});
+  });
+  (draft.sections||[]).forEach(sec=>{if(same(sec.name,sectionName))sec.tags=strip(sec.tags)});
+  if(sectionRenaming&&same(sectionRenaming.tag,name))sectionRenaming=null;
+  save();
+  render();
+}
+function commitSectionRename(sectionId,oldName,raw){
+  if(!sectionRenaming||sectionRenaming.id!==sectionId||!same(sectionRenaming.tag,oldName))return;
+  sectionRenaming=null;
+  const name=String(raw||'').trim();
+  const s=(draft.sections||[]).find(x=>x.id===sectionId);
+  const cat=currentCat();
+  if(!s||!cat||!name||name===oldName){render();return}
+  const key=sectionTagBucket(cat,s.name,true);
+  const list=cat.sectionTags[key];
+  const clash=list.find(t=>same(t,name)&&!same(t,oldName));
+  const next=clash||name;
+  const idx=list.findIndex(t=>same(t,oldName));
+  if(clash)cat.sectionTags[key]=list.filter(t=>!same(t,oldName));
+  else if(idx>=0)list[idx]=next;
+  else list.push(next);
+  const rewrite=tags=>[...new Set(tagList(tags).map(t=>same(t,oldName)?next:t))];
+  state.entries.forEach(e=>{
+    if(e.categoryId!==cat.id||!Array.isArray(e.sections))return;
+    e.sections.forEach(sec=>{if(same(sec.name,s.name))sec.tags=rewrite(sec.tags)});
+  });
+  (draft.sections||[]).forEach(sec=>{if(same(sec.name,s.name))sec.tags=rewrite(sec.tags)});
+  save();
+  render();
+}
+function sectionChip(section,tag){
+  const on=tagList(section.tags).some(t=>same(t,tag));
+  const editing=sectionTagEdit===section.id;
+  if(editing&&sectionRenaming&&sectionRenaming.id===section.id&&same(sectionRenaming.tag,tag)){
+    const inp=h('input',{class:'chip-input','aria-label':`Rename ${tag}`,value:tag,
+      onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();commitSectionRename(section.id,tag,ev.target.value)}
+        if(ev.key==='Escape'){sectionRenaming=null;render()}
+      },
+      onblur:ev=>commitSectionRename(section.id,tag,ev.target.value)});
+    setTimeout(()=>{inp.focus();inp.select()},0);
+    return h('span',{class:'chip editing','data-tag':tag},inp);
+  }
+  const text=h('button',{type:'button',class:'chip-text',onclick:()=>{
+    if(editing){readDraft();sectionRenaming={id:section.id,tag};render()}
+    else toggleSectionTag(section.id,tag);
+  }},tag);
+  const kids=[text];
+  if(editing)kids.push(h('button',{type:'button',class:'chip-x','aria-label':`Delete tag ${tag}`,onclick:ev=>{ev.stopPropagation();deleteSectionTag(section.name,tag)}},'×'));
+  return h('span',{class:'chip'+(on?' on':'')+(editing?' edit':''),'data-tag':tag,'data-on':on?'true':'false'},...kids);
+}
+function sectionTagBox(s){
+  const cat=currentCat();
+  const key=cat?sectionTagBucket(cat,s.name,false):null;
+  const watched=key!=null?tagList(cat.sectionTags[key]):[];
+  const names=[...watched];
+  tagList(s.tags).forEach(t=>{if(!names.some(n=>same(n,t)))names.push(t)});
+  const editing=sectionTagEdit===s.id;
+  return h('div',{class:'section-tagbox','data-section-tags':s.id},
+    h('p',{class:'watch'},'Tags you are watching'),
+    names.length?h('div',{class:'chips'},...names.map(t=>sectionChip(s,t))):h('p',{class:'muted sm'},'No tags yet.'),
+    h('div',{class:'tag-row'},
+      h('input',{class:'field','data-section-tag':s.id,value:pendingSectionTags[s.id]||'',placeholder:'New word, kept for this section','aria-label':'New word, kept for this section',autocomplete:'off',
+        onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addSectionTag(s.id)}},
+        oninput:ev=>{pendingSectionTags[s.id]=ev.target.value}}),
+      h('button',{type:'button',class:'btn ghost',onclick:()=>addSectionTag(s.id)},'Add tag'),
+      h('button',{type:'button',class:editing?'btn':'btn ghost','aria-pressed':editing?'true':'false',onclick:()=>{
+        readDraft();
+        if(sectionTagEdit===s.id){sectionTagEdit=null;sectionRenaming=null}else{sectionTagEdit=s.id;sectionRenaming=null}
+        render();
+      }},editing?'Done':'Edit')));
+}
 function sectionEditor(){
   const sections=draft.sections||[];
   const rows=sections.map((s,i)=>h('div',{class:'note-section','data-section':s.id},
     h('div',{class:'section-head'},
       h('input',{class:'field section-name','data-section-name':s.id,value:s.name,placeholder:'Section name','aria-label':'Section name',autocomplete:'off',
         onkeydown:ev=>{if(ev.key==='Enter')ev.preventDefault()},
-        oninput:ev=>{s.name=ev.target.value;rememberSections()}}),
+        oninput:ev=>{
+          const prev=s.name;
+          const start=ev.target.selectionStart,end=ev.target.selectionEnd;
+          readDraft();
+          moveSectionTags(prev,s.name);
+          rememberSections();
+          render();
+          const name=document.querySelector(`[data-section-name="${s.id}"]`);
+          if(name){name.focus();if(start!=null&&name.setSelectionRange)name.setSelectionRange(start,end);}
+        }}),
       h('div',{class:'section-tools'},
         h('button',{type:'button',class:'section-move','aria-label':'Move section up',disabled:i===0,onclick:()=>moveSection(s.id,-1)},'Up'),
         h('button',{type:'button',class:'section-move','aria-label':'Move section down',disabled:i===sections.length-1,onclick:()=>moveSection(s.id,1)},'Down'),
@@ -620,7 +775,8 @@ function sectionEditor(){
     h('input',{class:'field section-title','data-section-title':s.id,value:s.title||'',placeholder:'Title','aria-label':'Section title',autocomplete:'off',
       onkeydown:ev=>{if(ev.key==='Enter')ev.preventDefault()},
       oninput:ev=>{s.title=ev.target.value}}),
-    h('textarea',{class:'field note section-text','data-section-text':s.id,'aria-label':(s.name||'').trim()||'Section'})));
+    h('textarea',{class:'field note section-text','data-section-text':s.id,'aria-label':(s.name||'').trim()||'Section'}),
+    sectionTagBox(s)));
   return h('div',{class:'note-sections',id:'noteSections'},
     ...rows,
     h('button',{type:'button',class:'btn ghost add-section',id:'addSection',onclick:addNoteSection},'+ Add note section'));
@@ -645,6 +801,7 @@ function readDraft(){
     if(title)s.title=title.value;
     if(text)s.text=text.value;
   });
+  document.querySelectorAll('[data-section-tag]').forEach(inp=>{pendingSectionTags[inp.getAttribute('data-section-tag')]=inp.value});
   const ss=$('timerStart');
   if(ss)draft.timerStart=ss.value;
   const se=$('timerEnd');
@@ -691,6 +848,7 @@ function openCategory(id){
   editingId=null;
   tagEdit=false;
   renamingTag=null;
+  clearSectionTagUi();
   focusTitle=true;
   freshDraft(catById(id));
   render();
@@ -701,6 +859,7 @@ function closeCategory(){
   editingId=null;
   tagEdit=false;
   renamingTag=null;
+  clearSectionTagUi();
   freshDraft(null);
   render();
 }
@@ -712,6 +871,7 @@ function editEntry(e){
   pendingTag='';
   tagEdit=false;
   renamingTag=null;
+  clearSectionTagUi();
   focusTitle=true;
   imageError='';
   render();
@@ -726,6 +886,7 @@ function removeEntry(id){
     editingId=null;
     tagEdit=false;
     renamingTag=null;
+    clearSectionTagUi();
     freshDraft(currentCat());
   }
   save();
@@ -809,6 +970,7 @@ function saveEntry(ev){
   editingId=null;
   tagEdit=false;
   renamingTag=null;
+  clearSectionTagUi();
   save();
   forgetImages(dropped);
   freshDraft(cat);
@@ -944,6 +1106,7 @@ function renderCatScreen(){
         editingId=null;
         tagEdit=false;
         renamingTag=null;
+        clearSectionTagUi();
         freshDraft(cat);
         render();
       }},'Cancel'):null));
@@ -966,14 +1129,19 @@ function entryPreview(e){
   const timer=typeOf(catById(e.categoryId)).id==='timer';
   const dur=formatDuration(entryMinutes(e));
   const title=timer?(e.title||'Untitled'):(e.title||dur||'Untitled');
-  const heads=timer?(Array.isArray(e.sections)?e.sections:[]).filter(s=>(s.title||'').trim()).map(s=>{
+  const lines=[];
+  if(timer)(Array.isArray(e.sections)?e.sections:[]).forEach(s=>{
+    const heading=(s.title||'').trim();
+    const tags=tagList(s.tags);
+    if(!heading&&!tags.length)return;
     const name=(s.name||'').trim()||'Section';
-    return `${name}: ${(s.title||'').trim()}`;
-  }):[];
+    lines.push(h('p',{class:'preview-section'},heading?`${name}: ${heading}`:name));
+    if(tags.length)lines.push(h('p',{class:'accent sm preview-section-tags'},tags.join(' · ')));
+  });
   return h('div',{class:'preview-block'},
     h('p',{class:'preview-title'},title),
     timer&&dur?h('p',{class:'accent sm preview-dur','data-duration':dur},dur):null,
-    ...heads.map(t=>h('p',{class:'preview-section'},t)),
+    ...lines,
     e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
 }
 function catCard(c){
@@ -1002,7 +1170,7 @@ function renderCats(){
       if(!n)return;
       const type=TYPES[newType]?newType:'notes';
       const cat={id:uid(),name:n,tags:[],type};
-      if(type==='timer')cat.sectionNames=['Notes'];
+      if(type==='timer'){cat.sectionNames=['Notes'];cat.sectionTags={};}
       state.categories.push(cat);
       addingCat=false;
       newType='notes';

@@ -59,6 +59,8 @@ textarea.dream{min-height:6.5rem}
 .section-move:disabled{opacity:.35;cursor:default}
 .section-remove{color:var(--muted)}
 .add-section{margin-top:.75rem}
+.section-tagbox .watch{margin-top:.7rem}
+.section-tags-line,.preview-section-tags{margin:.15rem 0 0}
 .kicker{margin:.75rem 0 0;font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .labeled .note-text{margin-top:.15rem}
 .watch{margin:1.1rem 0 0;color:var(--muted);font-size:.875rem}
