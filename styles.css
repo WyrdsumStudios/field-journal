@@ -46,7 +46,7 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .lbl{display:block;margin-top:.85rem}
 .lbl:first-child{margin-top:0}
 .lbl .field{margin-top:.35rem}
-textarea.note,textarea.section-text{min-height:12rem;resize:vertical}
+textarea.note,textarea.section-text{min-height:min(24rem,60vh);resize:vertical}
 textarea.dream{min-height:6.5rem}
 .note-sections{margin-top:.35rem}
 .note-section{margin-top:.9rem}

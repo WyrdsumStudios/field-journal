@@ -153,11 +153,11 @@ const TYPES={
     },
     hasContent(d){
       const written=(d.sections||[]).some(s=>(s.text||'').trim()||(s.title||'').trim()||tagList(s.tags).length);
-      return !!(d.title.trim()||written||(d.tags||[]).length||(d.images||[]).length||(d.timerStart&&d.timerEnd)||(Number.isFinite(d.durationMinutes)&&d.durationMinutes>0));
+      return !!(d.title.trim()||written||(d.images||[]).length||(d.timerStart&&d.timerEnd)||(Number.isFinite(d.durationMinutes)&&d.durationMinutes>0));
     },
     write(entry,d){
       entry.title=d.title.trim();
-      entry.tags=[...d.tags];
+      entry.tags=[];
       entry.images=[...(d.images||[])];
       entry.sections=normalizeSections(d.sections).map(s=>({id:s.id,name:s.name.trim(),title:(s.title||'').trim(),text:s.text.trim(),tags:tagList(s.tags).map(t=>t.trim()).filter(Boolean)}));
       entry.note=sectionText(entry.sections,'notes');
@@ -177,7 +177,6 @@ const TYPES={
       return [
         dur?h('p',{class:'sleep-line','data-duration':dur},dur):null,
         times?h('p',{class:'muted sm time-line'},times):null,
-        tagLine(e.tags),
         ...blocks,
         imageGrid(e.images)
       ];
@@ -314,6 +313,7 @@ function load(){
         if(wasSleep){c.type='timer';migrated=true}
         if(!c.type||!TYPES[c.type])c.type='notes';
         if(c.type==='timer'){
+          if(c.tags.length){c.tags=[];migrated=true}
           if(Array.isArray(c.sectionNames))c.sectionNames=c.sectionNames.map(n=>String(n));
           else if(wasSleep){c.sectionNames=['Dreams','Notes'];migrated=true}
           const raw=c.sectionTags;
@@ -330,6 +330,7 @@ function load(){
         if(e.sleepEnd&&!e.timerEnd){e.timerEnd=e.sleepEnd;migrated=true}
         const cat=state.categories.find(c=>c.id===e.categoryId);
         if(!cat||cat.type!=='timer')return;
+        if(e.tags.length){e.tags=[];migrated=true}
         if(Array.isArray(e.sections)){
           const next=normalizeSections(e.sections);
           if(JSON.stringify(next)!==JSON.stringify(e.sections))migrated=true;
@@ -1093,7 +1094,7 @@ function renderCatScreen(){
         render();
       }},tagEdit?'Done':'Edit'))
   ];
-  const writing=type.id==='timer'?[type.tail(draft),...tagBlock]:[...tagBlock,type.tail(draft)];
+  const writing=type.id==='timer'?[type.tail(draft)]:[...tagBlock,type.tail(draft)];
   const form=h('form',{class:'card',id:'entryForm',onsubmit:saveEntry},
     editingId?h('p',{class:'muted sm editing-flag'},'Editing entry'):null,
     ...type.fields(draft),
@@ -1142,7 +1143,7 @@ function entryPreview(e){
     h('p',{class:'preview-title'},title),
     timer&&dur?h('p',{class:'accent sm preview-dur','data-duration':dur},dur):null,
     ...lines,
-    e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
+    !timer&&e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
 }
 function catCard(c){
   const list=dayEntries(sel,c.id);
