@@ -676,6 +676,17 @@ function applyAppearance(){
   if(meta)meta.setAttribute('content',s.accent);
 }
 const GOAL_TYPES={checks:{id:'checks',label:'Daily check-boxes'}};
+function normalizeGoalEntry(e){
+  const copy=Object.assign({},e);
+  copy.id=typeof e.id==='string'&&e.id?e.id:uid();
+  copy.date=/^\d{4}-\d{2}-\d{2}$/.test(e.date)?e.date:'';
+  copy.title=typeof e.title==='string'?e.title:'';
+  copy.note=typeof e.note==='string'?e.note:'';
+  copy.tags=tagList(e.tags);
+  copy.images=Array.isArray(e.images)?e.images.map(String):[];
+  copy.createdAt=Number.isFinite(Number(e.createdAt))?Number(e.createdAt):Date.now();
+  return copy;
+}
 function normalizeGoal(g){
   const copy=Object.assign({},g);
   copy.id=typeof g.id==='string'&&g.id?g.id:uid();
@@ -690,17 +701,25 @@ function normalizeGoal(g){
   copy.items=items;
   copy.tags=tagList(g.tags);
   const ids=new Set(items.map(it=>it.id));
+  const entries=(Array.isArray(g.entries)?g.entries:[]).filter(e=>e&&typeof e==='object').map(normalizeGoalEntry).filter(e=>e.date);
   const days={};
   const raw=g.days&&typeof g.days==='object'&&!Array.isArray(g.days)?g.days:{};
   Object.keys(raw).forEach(k=>{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(k)||!raw[k]||typeof raw[k]!=='object'||Array.isArray(raw[k]))return;
     const d=Object.assign({},raw[k]);
-    d.note=typeof raw[k].note==='string'?raw[k].note:'';
-    d.tags=tagList(raw[k].tags);
+    const note=typeof raw[k].note==='string'?raw[k].note.trim():'';
+    const tags=tagList(raw[k].tags);
+    d.note='';
+    d.tags=[];
     d.checks=tagList(raw[k].checks).filter(id=>ids.has(id));
+    if(note||tags.length){
+      const dup=entries.some(e=>e.date===k&&e.note===note&&tags.length===e.tags.length&&tags.every(t=>e.tags.some(x=>same(x,t))));
+      if(!dup)entries.push({id:uid(),date:k,title:'',note,tags,images:[],createdAt:Date.now()});
+    }
     days[k]=d;
   });
   copy.days=days;
+  copy.entries=entries;
   return copy;
 }
 function load(){
@@ -807,8 +826,8 @@ const save=()=>{readGoalNotes();localStorage.setItem(KEY,JSON.stringify(state));
 if(state._migrated){delete state._migrated;save()}
 let sel=key(new Date()),view=parse(sel),addingCat=false,newType='notes';
 let openCat=null,openGoal=null,editingId=null,tagEdit=false,renamingTag=null,focusTitle=false;
-let addingGoal=false,newGoalType='checks',goalTagEdit=null,goalRenaming=null,focusItemId=null;
-const pendingGoalTags={};
+let addingGoal=false,newGoalType='checks',goalEditingId=null,itemEdit=false,itemRenaming=null,goalNameEdit=false;
+let pendingItem='';
 let draft=TYPES.notes.blank(),pendingTag='',imageError='';
 const sessionNew=new Set();
 const expanded=new Set();
@@ -1283,7 +1302,16 @@ function updateTimerReadout(){
 function select(k){
   readGoalNotes();
   if($('entryForm'))readDraft();
-  if(k!==sel&&!editingId&&!tempTouched)draft.temperature=null;
+  const changing=k!==sel;
+  if(changing&&!editingId&&!tempTouched)draft.temperature=null;
+  if(changing&&openGoal){
+    abandonNewImages();
+    goalEditingId=null;
+    tagEdit=false;
+    renamingTag=null;
+    freshDraft(null);
+    pendingTag='';
+  }
   sel=k;view=parse(k);picker=false;render();
 }
 function shift(n){const d=parse(sel);d.setDate(d.getDate()+n);select(key(d))}
@@ -1633,33 +1661,61 @@ function ensureDay(g,date){
 }
 function readGoalNotes(){
   if(!goalNotesFor||goalNotesFor!==sel)return;
-  document.querySelectorAll('[data-goal-note]').forEach(el=>{
-    const g=goalById(el.getAttribute('data-goal-note'));
-    if(g)ensureDay(g,sel).note=el.value;
-  });
-  document.querySelectorAll('[data-goal-tag]').forEach(el=>{pendingGoalTags[el.getAttribute('data-goal-tag')]=el.value});
+  const form=$('entryForm');
+  const screen=$('goalScreen');
+  if(openGoal&&form&&screen&&screen.contains(form))readDraft();
+  const item=$('newItem');
+  if(item)pendingItem=item.value;
+}
+function goalEntries(g,date){
+  return (g.entries||[]).filter(e=>e.date===date).slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
 }
 function openGoalScreen(id){
   readGoalNotes();
+  abandonNewImages();
   openGoal=id;
   openCat=null;
   addingGoal=false;
-  goalTagEdit=null;
-  goalRenaming=null;
+  goalEditingId=null;
+  itemEdit=false;
+  itemRenaming=null;
+  goalNameEdit=false;
+  pendingItem='';
+  tagEdit=false;
+  renamingTag=null;
+  editingId=null;
+  focusTitle=true;
+  freshDraft(null);
   render();
 }
 function closeGoal(){
-  readGoalNotes();
+  abandonNewImages();
   openGoal=null;
-  goalTagEdit=null;
-  goalRenaming=null;
+  goalEditingId=null;
+  itemEdit=false;
+  itemRenaming=null;
+  goalNameEdit=false;
+  pendingItem='';
+  tagEdit=false;
+  renamingTag=null;
+  freshDraft(null);
   render();
 }
 function deleteGoal(g){
   if(!confirm(`Delete goal "${g.name||'Untitled'}"?`))return;
   readGoalNotes();
+  const ids=(g.entries||[]).flatMap(e=>e.images||[]);
+  if(openGoal===g.id){ids.push(...sessionNew);sessionNew.clear();openGoal=null;goalEditingId=null}
   state.goals=state.goals.filter(x=>x.id!==g.id);
-  if(openGoal===g.id)openGoal=null;
+  save();
+  forgetImages(ids);
+  render();
+}
+function commitGoalName(g,raw){
+  if(!goalNameEdit)return;
+  goalNameEdit=false;
+  const name=String(raw||'').trim();
+  if(name)g.name=name;
   save();
   render();
 }
@@ -1677,10 +1733,11 @@ function addGoalItem(goalId){
   readGoalNotes();
   const g=goalById(goalId);
   if(!g)return;
-  const item={id:uid(),name:''};
+  const name=pendingItem.trim();
+  pendingItem='';
+  if(!name)return;
   g.items=g.items||[];
-  g.items.push(item);
-  focusItemId=item.id;
+  g.items.push({id:uid(),name});
   save();
   render();
 }
@@ -1690,49 +1747,54 @@ function removeGoalItem(goalId,itemId){
   if(!g)return;
   g.items=(g.items||[]).filter(it=>it.id!==itemId);
   Object.values(g.days||{}).forEach(d=>{if(d&&Array.isArray(d.checks))d.checks=d.checks.filter(id=>id!==itemId)});
+  if(itemRenaming===itemId)itemRenaming=null;
   save();
   render();
 }
-function addGoalTag(goalId){
+function commitItemRename(g,item,raw){
+  if(itemRenaming!==item.id)return;
+  itemRenaming=null;
+  const name=String(raw||'').trim();
+  if(name)item.name=name;
+  save();
+  render();
+}
+function addGoalTag(){
   readGoalNotes();
-  const g=goalById(goalId);
+  const g=goalById(openGoal);
   if(!g)return;
-  const raw=String(pendingGoalTags[goalId]||'').trim();
-  pendingGoalTags[goalId]='';
-  if(!raw)return;
+  const name=pendingTag.trim();
+  pendingTag='';
+  if(!name)return;
   g.tags=tagList(g.tags);
-  if(!g.tags.some(t=>same(t,raw)))g.tags.push(raw);
-  const canonical=g.tags.find(t=>same(t,raw));
-  const day=ensureDay(g,sel);
-  if(canonical&&!day.tags.some(t=>same(t,canonical)))day.tags.push(canonical);
+  if(!g.tags.some(t=>same(t,name)))g.tags.push(name);
+  const canonical=g.tags.find(t=>same(t,name));
+  if(canonical&&!draft.tags.some(t=>same(t,canonical)))draft.tags.push(canonical);
   save();
   render();
 }
-function toggleGoalTag(goalId,name){
+function toggleGoalTag(name){
   readGoalNotes();
-  const g=goalById(goalId);
-  if(!g)return;
-  const day=ensureDay(g,sel);
-  const i=day.tags.findIndex(t=>same(t,name));
-  if(i>=0)day.tags.splice(i,1);else day.tags.push(name);
-  save();
+  const i=draft.tags.findIndex(t=>same(t,name));
+  if(i>=0)draft.tags.splice(i,1);else draft.tags.push(name);
   render();
 }
-function deleteGoalTag(goalId,name){
+function deleteGoalTag(name){
   readGoalNotes();
-  const g=goalById(goalId);
+  const g=goalById(openGoal);
   if(!g)return;
   g.tags=tagList(g.tags).filter(t=>!same(t,name));
-  Object.values(g.days||{}).forEach(d=>{if(d&&Array.isArray(d.tags))d.tags=d.tags.filter(t=>!same(t,name))});
-  if(goalRenaming&&same(goalRenaming,name))goalRenaming=null;
+  (g.entries||[]).forEach(e=>{e.tags=tagList(e.tags).filter(t=>!same(t,name))});
+  draft.tags=draft.tags.filter(t=>!same(t,name));
+  if(renamingTag&&same(renamingTag,name))renamingTag=null;
   save();
   render();
 }
-function commitGoalRename(goalId,oldName,raw){
-  if(goalTagEdit!==goalId||!goalRenaming||!same(goalRenaming,oldName))return;
-  goalRenaming=null;
+function commitGoalRename(oldName,raw){
+  if(!renamingTag||!same(renamingTag,oldName))return;
+  renamingTag=null;
   const name=String(raw||'').trim();
-  const g=goalById(goalId);
+  const g=goalById(openGoal);
   if(!g||!name||name===oldName){render();return}
   g.tags=tagList(g.tags);
   const clash=g.tags.find(t=>same(t,name)&&!same(t,oldName));
@@ -1742,90 +1804,183 @@ function commitGoalRename(goalId,oldName,raw){
   else if(idx>=0)g.tags[idx]=next;
   else g.tags.push(next);
   const rewrite=list=>[...new Set(tagList(list).map(t=>same(t,oldName)?next:t))];
-  Object.values(g.days||{}).forEach(d=>{if(d)d.tags=rewrite(d.tags)});
+  (g.entries||[]).forEach(e=>{e.tags=rewrite(e.tags)});
+  draft.tags=rewrite(draft.tags);
   save();
   render();
 }
-function goalChip(g,tag){
-  const on=dayOf(g,sel).tags.some(t=>same(t,tag));
-  const editing=goalTagEdit===g.id;
-  if(editing&&goalRenaming&&same(goalRenaming,tag)){
+function goalChip(tag){
+  const on=draft.tags.some(t=>same(t,tag));
+  if(tagEdit&&renamingTag&&same(renamingTag,tag)){
     const inp=h('input',{class:'chip-input','aria-label':`Rename ${tag}`,value:tag,
       onkeydown:ev=>{
-        if(ev.key==='Enter'){ev.preventDefault();commitGoalRename(g.id,tag,ev.target.value)}
-        if(ev.key==='Escape'){goalRenaming=null;render()}
+        if(ev.key==='Enter'){ev.preventDefault();commitGoalRename(tag,ev.target.value)}
+        if(ev.key==='Escape'){renamingTag=null;render()}
       },
-      onblur:ev=>commitGoalRename(g.id,tag,ev.target.value)});
+      onblur:ev=>commitGoalRename(tag,ev.target.value)});
     setTimeout(()=>{inp.focus();inp.select()},0);
     return h('span',{class:'chip editing','data-tag':tag},inp);
   }
   const text=h('button',{type:'button',class:'chip-text',onclick:()=>{
-    if(editing){readGoalNotes();goalRenaming=tag;render()}
-    else toggleGoalTag(g.id,tag);
+    if(tagEdit){readGoalNotes();renamingTag=tag;render()}
+    else toggleGoalTag(tag);
   }},tag);
   const kids=[text];
-  if(editing)kids.push(h('button',{type:'button',class:'chip-x','aria-label':`Delete tag ${tag}`,onclick:ev=>{ev.stopPropagation();deleteGoalTag(g.id,tag)}},'×'));
-  return h('span',{class:'chip'+(on?' on':'')+(editing?' edit':''),'data-tag':tag,'data-on':on?'true':'false'},...kids);
+  if(tagEdit)kids.push(h('button',{type:'button',class:'chip-x','aria-label':`Delete tag ${tag}`,onclick:ev=>{ev.stopPropagation();deleteGoalTag(tag)}},'×'));
+  return h('span',{class:'chip'+(on?' on':'')+(tagEdit?' edit':''),'data-tag':tag,'data-on':on?'true':'false'},...kids);
 }
-function goalTagBox(g){
-  const day=dayOf(g,sel);
-  const names=[...tagList(g.tags)];
-  day.tags.forEach(t=>{if(!names.some(n=>same(n,t)))names.push(t)});
-  const editing=goalTagEdit===g.id;
-  return h('div',{class:'goal-tags','data-goal-tags':g.id},
-    h('p',{class:'watch'},'Tags you are watching'),
-    names.length?h('div',{class:'chips'},...names.map(t=>goalChip(g,t))):h('p',{class:'muted sm'},'No tags yet.'),
-    h('div',{class:'tag-row'},
-      h('input',{class:'field','data-goal-tag':g.id,value:pendingGoalTags[g.id]||'',placeholder:'New word, kept for this goal','aria-label':'New word, kept for this goal',autocomplete:'off',
-        onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addGoalTag(g.id)}},
-        oninput:ev=>{pendingGoalTags[g.id]=ev.target.value}}),
-      h('button',{type:'button',class:'btn ghost',onclick:()=>addGoalTag(g.id)},'Add tag'),
-      h('button',{type:'button',class:editing?'btn':'btn ghost','aria-pressed':editing?'true':'false',onclick:()=>{
-        readGoalNotes();
-        if(goalTagEdit===g.id){goalTagEdit=null;goalRenaming=null}else{goalTagEdit=g.id;goalRenaming=null}
-        render();
-      }},editing?'Done':'Edit')));
+function itemCell(g,item,editable){
+  const label=(item.name||'').trim()||'Item';
+  if(!editable||!itemEdit)return h('th',{scope:'row',class:'item-name'},label);
+  if(itemRenaming===item.id){
+    const inp=h('input',{class:'item-input','aria-label':`Rename ${label}`,value:item.name,
+      onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();commitItemRename(g,item,ev.target.value)}
+        if(ev.key==='Escape'){itemRenaming=null;render()}
+      },
+      onblur:ev=>commitItemRename(g,item,ev.target.value)});
+    setTimeout(()=>{inp.focus();inp.select()},0);
+    return h('th',{scope:'row',class:'item-name'},inp);
+  }
+  return h('th',{scope:'row',class:'item-name'},
+    h('span',{class:'item-cell'},
+      h('button',{type:'button',class:'item-text',onclick:()=>{readGoalNotes();itemRenaming=item.id;render()}},label),
+      h('button',{type:'button',class:'item-x','aria-label':`Delete item ${label}`,onclick:ev=>{ev.stopPropagation();removeGoalItem(g.id,item.id)}},'×')));
 }
-function weekTable(g){
+function weekTable(g,editable){
   const today=key(new Date());
   const dates=weekDates(sel);
   const head=h('tr',null,
-    h('th',{scope:'col'}),
-    ...dates.map((date,i)=>h('th',{scope:'col',class:[date===today&&'today',date===sel&&'col-sel'].filter(Boolean).join(' '),'data-col':date},
+    h('th',{scope:'col',class:'item-name'}),
+    ...dates.map((date,i)=>h('th',{scope:'col',class:[date===today&&'today',date===sel&&date!==today&&'col-sel'].filter(Boolean).join(' '),'data-col':date},
       WEEKDAYS[i],h('br'),String(parse(date).getDate()))));
   const rows=(g.items||[]).map(item=>h('tr',{'data-item':item.id},
-    h('th',{scope:'row',class:'item-name'},(item.name||'').trim()||'Item'),
+    itemCell(g,item,editable),
     ...dates.map(date=>{
       const on=dayOf(g,date).checks.includes(item.id);
-      const todayCol=date===today;
-      return h('td',{class:todayCol?'today':''},
+      return h('td',{class:date===today?'today':''},
         h('button',{type:'button',class:'check'+(on?' on':''),'aria-pressed':on?'true':'false','aria-label':`${(item.name||'').trim()||'Item'} on ${fmt(date)}`,'data-date':date,onclick:ev=>{
           ev.stopPropagation();
           toggleCheck(g.id,item.id,date);
         }},on?'✓':''));
     })));
-  return h('table',{class:'week'},h('thead',null,head),h('tbody',null,
-    rows.length?rows:h('tr',null,h('td',{colspan:'8',class:'muted sm'},'No items yet.'))));
+  return h('div',{class:'week-wrap'},h('table',{class:'week'},h('thead',null,head),h('tbody',null,
+    rows.length?rows:h('tr',null,h('td',{colspan:'8',class:'muted sm'},'No items yet.')))));
 }
-function goalNotes(g){
-  const day=dayOf(g,sel);
-  return h('div',{class:'goal-notes'},
-    h('label',{class:'lbl'},`Notes · ${fmt(sel)}`,h('textarea',{class:'field goal-note','data-goal-note':g.id,value:day.note,'aria-label':`Notes for ${fmt(sel)}`,oninput:ev=>{
-      ensureDay(g,sel).note=ev.target.value;
-      save();
-    }})),
-    goalTagBox(g));
+function goalPreviewTitle(e){
+  const title=(e.title||'').trim();
+  if(title)return title;
+  const line=(e.note||'').trim().split('\n')[0];
+  if(!line)return '';
+  return line.length>80?line.slice(0,77)+'…':line;
+}
+function goalEntryPreview(e){
+  const title=goalPreviewTitle(e);
+  return h('div',{class:'preview-block'},
+    title?h('p',{class:'preview-title'},title):null,
+    e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
+}
+function saveGoalEntry(ev){
+  if(ev)ev.preventDefault();
+  readDraft();
+  const g=goalById(openGoal);
+  if(!g)return;
+  if(!TYPES.notes.hasContent(draft))return;
+  g.entries=Array.isArray(g.entries)?g.entries:[];
+  const prev=goalEditingId?[...((g.entries.find(x=>x.id===goalEditingId)||{}).images||[])]:[];
+  let entry;
+  if(goalEditingId){
+    entry=g.entries.find(x=>x.id===goalEditingId);
+    if(!entry)return;
+  }else{
+    entry={id:uid(),date:sel,createdAt:Date.now(),tags:[],images:[]};
+    g.entries.push(entry);
+  }
+  TYPES.notes.write(entry,draft);
+  const keep=new Set(entry.images||[]);
+  const dropped=prev.filter(id=>!keep.has(id));
+  sessionNew.clear();
+  goalEditingId=null;
+  tagEdit=false;
+  renamingTag=null;
+  save();
+  forgetImages(dropped);
+  freshDraft(null);
+  render();
+}
+function editGoalEntry(e){
+  abandonNewImages();
+  goalEditingId=e.id;
+  draft=TYPES.notes.fromEntry(e);
+  pendingTag='';
+  tagEdit=false;
+  renamingTag=null;
+  focusTitle=true;
+  imageError='';
+  render();
+}
+function removeGoalEntry(id){
+  const g=goalById(openGoal);
+  if(!g)return;
+  const e=(g.entries||[]).find(x=>x.id===id);
+  const ids=[...(e&&e.images||[])];
+  g.entries=(g.entries||[]).filter(x=>x.id!==id);
+  if(goalEditingId===id){
+    ids.push(...sessionNew);
+    sessionNew.clear();
+    goalEditingId=null;
+    tagEdit=false;
+    renamingTag=null;
+    freshDraft(null);
+  }
+  save();
+  forgetImages(ids);
+  render();
+}
+function goalEntryCard(e){
+  const editing=e.id===goalEditingId;
+  return h('article',{class:'entry-card'+(editing?' editing':''),'data-entry':e.id,onclick:ev=>{
+    if(ev.target.closest('button'))return;
+    editGoalEntry(e);
+  }},
+    h('div',{class:'row top-row'},h('strong',null,e.title||'Untitled'),h('span',{class:'muted sm'},fmt(e.date))),
+    e.note?h('p',{class:'note-text'},e.note):null,
+    tagLine(e.tags),
+    imageGrid(e.images),
+    h('div',{class:'entry-actions'},
+      h('button',{type:'button',onclick:ev=>{ev.stopPropagation();editGoalEntry(e)}},'Edit'),
+      h('button',{type:'button',onclick:ev=>{ev.stopPropagation();removeGoalEntry(e.id)}},'Delete')));
+}
+function goalHeading(g){
+  if(goalNameEdit){
+    const inp=h('input',{id:'goalName',class:'goal-name-input',value:g.name,'aria-label':'Goal name',autocomplete:'off',
+      onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();commitGoalName(g,ev.target.value)}
+        if(ev.key==='Escape'){goalNameEdit=false;render()}
+      },
+      onblur:ev=>commitGoalName(g,ev.target.value)});
+    setTimeout(()=>{inp.focus();inp.select()},0);
+    return h('h2',{class:'cat-heading',id:'goalHeading'},inp);
+  }
+  return h('h2',{class:'cat-heading',id:'goalHeading'},
+    h('button',{type:'button',class:'goal-name',onclick:()=>{readGoalNotes();goalNameEdit=true;render()}},g.name||'Untitled'));
 }
 function renderGoals(){
   const root=$('goals');
   if(!root)return;
-  const cards=(state.goals||[]).map(g=>h('article',{class:'card goal-card','data-goal':g.id,'data-type':g.type||'checks'},
-    h('div',{class:'row'},
-      h('h3',null,h('button',{type:'button',class:'goal-title',onclick:()=>openGoalScreen(g.id)},g.name||'Untitled')),
-      h('button',{class:'x',type:'button','aria-label':`Delete ${g.name||'goal'}`,onclick:()=>deleteGoal(g)},'Delete')),
-    h('p',{class:'muted sm goal-type'},(GOAL_TYPES[g.type]||GOAL_TYPES.checks).label),
-    weekTable(g),
-    goalNotes(g)));
+  const cards=(state.goals||[]).map(g=>{
+    const written=goalEntries(g,sel).filter(e=>goalPreviewTitle(e)||(e.tags||[]).length);
+    return h('article',{class:'card goal-card','data-goal':g.id,'data-type':g.type||'checks',onclick:ev=>{
+      if(ev.target.closest('button'))return;
+      openGoalScreen(g.id);
+    }},
+      h('div',{class:'row'},
+        h('h3',null,h('button',{type:'button',class:'goal-title',onclick:()=>openGoalScreen(g.id)},g.name||'Untitled')),
+        h('button',{class:'x',type:'button','aria-label':`Delete ${g.name||'goal'}`,onclick:ev=>{ev.stopPropagation();deleteGoal(g)}},'Delete')),
+      h('p',{class:'muted sm goal-type'},(GOAL_TYPES[g.type]||GOAL_TYPES.checks).label),
+      weekTable(g,false),
+      written.length?written.map(goalEntryPreview):null);
+  });
   root.replaceChildren(...cards);
   if(addingGoal){
     const inp=h('input',{class:'field',placeholder:'Health, practice, home…','aria-label':'Name this goal'});
@@ -1834,14 +1989,12 @@ function renderGoals(){
       const n=inp.value.trim();
       if(!n)return;
       const type=GOAL_TYPES[newGoalType]?newGoalType:'checks';
-      const goal={id:uid(),name:n,type,items:[],tags:[],days:{}};
+      const goal={id:uid(),name:n,type,items:[],tags:[],days:{},entries:[]};
       state.goals.push(goal);
       addingGoal=false;
       newGoalType='checks';
-      openGoal=goal.id;
-      openCat=null;
       save();
-      render();
+      openGoalScreen(goal.id);
     }},
       h('h3',null,'New goal'),inp,
       h('p',{class:'watch'},'Type'),
@@ -1863,33 +2016,61 @@ function renderGoalScreen(){
   const g=goalById(openGoal);
   const root=$('goalScreen');
   if(!g){root.replaceChildren();return}
+  const names=[...tagList(g.tags)];
+  draft.tags.forEach(t=>{if(!names.some(n=>same(n,t)))names.push(t)});
+  const list=goalEntries(g,sel);
+  const form=h('form',{class:'card',id:'entryForm',onsubmit:saveGoalEntry},
+    goalEditingId?h('p',{class:'muted sm editing-flag'},'Editing entry'):null,
+    weekTable(g,true),
+    h('div',{class:'tag-row item-add'},
+      h('input',{id:'newItem',class:'field',value:pendingItem,placeholder:'New item','aria-label':'New item',autocomplete:'off',
+        onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addGoalItem(g.id)}},
+        oninput:ev=>{pendingItem=ev.target.value}}),
+      h('button',{type:'button',class:'btn ghost',id:'addGoalItem',onclick:()=>addGoalItem(g.id)},'Add item'),
+      h('button',{type:'button',class:itemEdit?'btn':'btn ghost',id:'editItems','aria-pressed':itemEdit?'true':'false',onclick:()=>{
+        readGoalNotes();
+        itemEdit=!itemEdit;
+        if(!itemEdit)itemRenaming=null;
+        render();
+      }},itemEdit?'Done':'Edit')),
+    h('label',{class:'lbl'},'Title',h('input',{id:'entryTitle',class:'field',value:draft.title,autocomplete:'off'})),
+    h('label',{class:'lbl'},'Note',h('textarea',{id:'entryNote',class:'field note'})),
+    h('p',{class:'watch',id:'tagLabel'},'Tags you are watching'),
+    names.length?h('div',{class:'chips',id:'tagChips'},...names.map(goalChip)):h('p',{class:'muted sm',id:'noTags'},'No tags yet.'),
+    h('div',{class:'tag-row'},
+      h('input',{id:'newTag',class:'field',value:pendingTag,placeholder:'New word, kept for this goal','aria-label':'New word, kept for this goal',autocomplete:'off',
+        onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addGoalTag()}}}),
+      h('button',{type:'button',class:'btn ghost',id:'addTag',onclick:addGoalTag},'Add tag'),
+      h('button',{type:'button',class:tagEdit?'btn':'btn ghost',id:'editTags','aria-pressed':tagEdit?'true':'false',onclick:()=>{
+        readGoalNotes();
+        if(tagEdit){tagEdit=false;renamingTag=null}else tagEdit=true;
+        render();
+      }},tagEdit?'Done':'Edit')),
+    imageSection(),
+    h('div',{class:'actions'},
+      h('button',{class:'btn',type:'submit',id:'saveEntry'},'Save entry'),
+      goalEditingId?h('button',{type:'button',class:'btn ghost',id:'cancelEdit',onclick:()=>{
+        abandonNewImages();
+        goalEditingId=null;
+        tagEdit=false;
+        renamingTag=null;
+        freshDraft(null);
+        render();
+      }},'Cancel'):null),
+    h('p',{class:'goal-delete-row'},h('button',{type:'button',class:'goal-delete',id:'deleteGoal',onclick:()=>deleteGoal(g)},'Delete goal')));
   root.replaceChildren(
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'goalBack',onclick:closeGoal},'Back'),
       h('p',{class:'muted',id:'goalDate'},fmt(sel))),
-    h('label',{class:'lbl'},'Name',h('input',{id:'goalName',class:'field',value:g.name,'aria-label':'Goal name',autocomplete:'off',oninput:ev=>{
-      g.name=ev.target.value;
-      document.querySelectorAll(`[data-goal="${g.id}"] .goal-title`).forEach(b=>{b.textContent=g.name||'Untitled'});
-      save();
-    }})),
-    h('p',{class:'muted sm goal-type'},(GOAL_TYPES[g.type]||GOAL_TYPES.checks).label),
-    h('div',{class:'actions'},h('button',{type:'button',class:'btn ghost',onclick:()=>deleteGoal(g)},'Delete goal')),
-    h('h2',{class:'cat-heading'},'Items'),
-    ...(g.items||[]).map(item=>h('div',{class:'item-row','data-item':item.id},
-      h('input',{class:'field','data-item-name':item.id,value:item.name,placeholder:'Drinking water, moving…','aria-label':'Item name',autocomplete:'off',oninput:ev=>{
-        item.name=ev.target.value;
-        const label=(item.name||'').trim()||'Item';
-        document.querySelectorAll(`tr[data-item="${item.id}"] .item-name`).forEach(th=>{th.textContent=label});
-        save();
-      }}),
-      h('button',{type:'button',class:'section-remove','aria-label':'Remove item',onclick:()=>removeGoalItem(g.id,item.id)},'Remove'))),
-    h('button',{type:'button',class:'btn ghost',id:'addGoalItem',onclick:()=>addGoalItem(g.id)},'Add item'),
-    weekTable(g),
-    goalNotes(g));
-  if(focusItemId){
-    const el=document.querySelector(`[data-item-name="${focusItemId}"]`);
-    if(el)el.focus();
-    focusItemId=null;
+    goalHeading(g),
+    form,
+    h('div',{class:'entry-list',id:'goalEntries'},
+      list.length?list.map(goalEntryCard):h('p',{class:'muted',id:'goalEmpty'},'Nothing written.')));
+  fillAreas();
+  if(focusTitle&&!goalNameEdit){
+    const el=$('entryTitle');
+    if(el){el.focus();const n=el.value.length;if(el.setSelectionRange)el.setSelectionRange(n,n)}
+    focusTitle=false;
   }
 }
 function catCard(c){
@@ -1971,9 +2152,10 @@ function renderCal(){
   }else box.replaceChildren();
   const g=$('calGrid'),y=view.getFullYear(),m=view.getMonth(),first=new Date(y,m,1).getDay(),n=new Date(y,m+1,0).getDate(),today=key(new Date());
   const has=new Set([...state.entries.map(e=>e.date),...Object.keys(state.dayTitles)]);
-  (state.goals||[]).forEach(g=>Object.entries(g.days||{}).forEach(([k,d])=>{
-    if(d&&((d.note||'').trim()||(d.tags||[]).length||(d.checks||[]).length))has.add(k);
-  }));
+  (state.goals||[]).forEach(g=>{
+    Object.entries(g.days||{}).forEach(([k,d])=>{if(d&&(d.checks||[]).length)has.add(k)});
+    (g.entries||[]).forEach(e=>{if(e&&e.date&&((e.title||'').trim()||(e.note||'').trim()||(e.tags||[]).length||(e.images||[]).length))has.add(e.date)});
+  });
   const cells=['S','M','T','W','T','F','S'].map(d=>h('div',{class:'dow'},d));
   for(let i=0;i<first;i++)cells.push(h('div'));
   for(let d=1;d<=n;d++){
