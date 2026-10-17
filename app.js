@@ -1108,14 +1108,23 @@ function toggleSectionTag(sectionId,name){
   if(i>=0)s.tags.splice(i,1);else s.tags.push(name);
   render();
 }
+function keepField(selector){
+  const el=document.querySelector(selector);
+  if(!el)return;
+  el.focus();
+  const n=el.value.length;
+  if(el.setSelectionRange)el.setSelectionRange(n,n);
+}
 function addSectionTag(sectionId){
   readDraft();
   const s=(draft.sections||[]).find(x=>x.id===sectionId);
   const cat=currentCat();
-  if(!s||!cat)return;
   const raw=String(pendingSectionTags[sectionId]||'').trim();
   pendingSectionTags[sectionId]='';
-  if(!raw)return;
+  const selector=`[data-section-tag="${sectionId}"]`;
+  const field=document.querySelector(selector);
+  if(field)field.value='';
+  if(!s||!cat||!raw){keepField(selector);return}
   const key=sectionTagBucket(cat,s.name,true);
   if(!cat.sectionTags[key].some(t=>same(t,raw)))cat.sectionTags[key].push(raw);
   const canonical=cat.sectionTags[key].find(t=>same(t,raw));
@@ -1123,6 +1132,7 @@ function addSectionTag(sectionId){
   if(canonical&&!s.tags.some(t=>same(t,canonical)))s.tags.push(canonical);
   save();
   render();
+  keepField(selector);
 }
 function deleteSectionTag(sectionName,name){
   readDraft();
@@ -1397,12 +1407,16 @@ function addTag(){
   readDraft();
   const name=pendingTag.trim();
   pendingTag='';
+  const field=$('newTag');
+  if(field)field.value='';
   const cat=currentCat();
-  if(!cat||!name)return;
+  if(!cat||!name){keepField('#newTag');return}
   if(!cat.tags.some(t=>same(t,name)))cat.tags.push(name);
   const canonical=cat.tags.find(t=>same(t,name));
   if(canonical&&!draft.tags.some(t=>same(t,canonical)))draft.tags.push(canonical);
-  save();render();
+  save();
+  render();
+  keepField('#newTag');
 }
 function deleteTag(name){
   readDraft();
@@ -1735,11 +1749,14 @@ function addGoalItem(goalId){
   if(!g)return;
   const name=pendingItem.trim();
   pendingItem='';
-  if(!name)return;
+  const field=$('newItem');
+  if(field)field.value='';
+  if(!name){keepField('#newItem');return}
   g.items=g.items||[];
   g.items.push({id:uid(),name});
   save();
   render();
+  keepField('#newItem');
 }
 function removeGoalItem(goalId,itemId){
   readGoalNotes();
@@ -1765,13 +1782,16 @@ function addGoalTag(){
   if(!g)return;
   const name=pendingTag.trim();
   pendingTag='';
-  if(!name)return;
+  const field=$('newTag');
+  if(field)field.value='';
+  if(!name){keepField('#newTag');return}
   g.tags=tagList(g.tags);
   if(!g.tags.some(t=>same(t,name)))g.tags.push(name);
   const canonical=g.tags.find(t=>same(t,name));
   if(canonical&&!draft.tags.some(t=>same(t,canonical)))draft.tags.push(canonical);
   save();
   render();
+  keepField('#newTag');
 }
 function toggleGoalTag(name){
   readGoalNotes();
