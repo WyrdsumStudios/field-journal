@@ -1,7 +1,7 @@
-:root{--bg:#f3efe6;--surface:#fbf8f2;--ink:#1c1914;--muted:#6e675c;--line:#e2dacb;--accent:#2f5d45;--page:var(--bg)}
+:root{--bg:#f3efe6;--surface:#fbf8f2;--ink:#1c1914;--muted:#6e675c;--line:#e2dacb;--accent:#2f5d45;--page:var(--bg);--content-max:1100px}
 *{box-sizing:border-box}[hidden]{display:none !important}body{margin:0;background-color:var(--page);background-image:var(--scene,none);background-size:cover;background-position:center top;background-attachment:fixed;color:var(--ink);font-family:Georgia,"Iowan Old Style","Times New Roman",serif}
 button,input,textarea{font:inherit;color:inherit;color-scheme:light}button{cursor:pointer;background:none;border:0}
-.wrap{width:min(1500px,90%);margin:0 auto;padding:2rem 0 3rem}
+.wrap{width:min(92vw, var(--content-max));margin:0 auto;padding:2rem 0 3rem}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;margin-bottom:1.5rem}.grow{flex:1;min-width:0}
 .eyebrow{margin:0;font-size:.875rem;font-weight:500;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 .day-title{margin-top:.25rem;width:100%;background:transparent;border:0;outline:0;font-size:2.25rem;line-height:1.15;overflow-wrap:break-word}.day-title::placeholder{opacity:.4;color:var(--ink)}
@@ -43,7 +43,7 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .month-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem;margin-top:.75rem}
 .month-grid .month{height:2.75rem;border:1px solid var(--line);border-radius:.6rem;background:var(--bg)}
 .month-grid .month.sel{background:var(--accent);color:var(--on-accent, var(--surface));border-color:var(--accent)}
-.cat-screen{margin:0}
+.cat-screen{width:100%;max-width:none;margin:0}
 .cat-card{min-height:12.5rem}
 .cat-top{display:flex;justify-content:space-between;align-items:center;gap:.75rem}
 .cat-tools{display:flex;align-items:center;gap:.75rem}
@@ -150,7 +150,7 @@ textarea.goal-note{min-height:6.5rem;resize:vertical}
 
 .look-modal{position:fixed;inset:0;z-index:40;background:rgba(16,14,12,.55);display:flex;justify-content:center;align-items:flex-start;padding:1rem;overflow:auto}
 .look-modal[hidden]{display:none !important}
-.look-panel{width:min(42rem,100%);margin:5vh 0 2rem}
+.look-panel{width:min(92vw, var(--content-max));margin:5vh auto 2rem}
 .look-head{align-items:center;margin-bottom:.35rem}
 .look-head h2{font-size:1.5rem}
 .look-head .btn{margin-top:0}

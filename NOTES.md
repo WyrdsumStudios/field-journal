@@ -6,7 +6,7 @@ The screenshots of that app use a different theme. The default look is still pap
 
 ## Structure
 - `index.html`: the page shell. Home has the header ("Field journal" label, "Name this day" input with placeholder "New Day", date, Look button), a Goals section, an Entries section with the category grid, the calendar card and the Days card. A category screen or a goal screen replaces that view while one is open. Look is only on the home header. A lightbox sits over the page for entry images.
-- `styles.css`: palette as CSS variables. The page is `min(1500px, 90%)` of the viewport. Category cards are a bit taller, and the category and goal screens use that same width. Goals are three columns on a wide screen, two on a tablet, and one on a phone. Categories stay two columns, or one on a phone. Tap targets stay around 2.75rem.
+- `styles.css`: palette as CSS variables. Every screen uses one width, `min(92vw, var(--content-max))`, with `--content-max` at 1100px: the home header, goals, entries, calendar, days list, category screen, goal screen, and the Look picker. Category cards are a bit taller. Goals are three columns at that width, two on a tablet, and one on a phone. Categories stay two columns, or one on a phone. Tap targets stay around 2.75rem.
 - `app.js`: vanilla JS with no build step. Journal state is saved to localStorage under `field-record-v2`. Image bytes, including an uploaded theme background, live in IndexedDB (`field-record-images`, object store `blobs`), referenced by id, so a photo does not have to fit in localStorage. A running stopwatch is a separate key, `field-record-watch`. Forecast responses are a separate key, `field-record-weather`, so a weather lookup does not rewrite the journal.
 
 ### Record shape
