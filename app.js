@@ -822,6 +822,7 @@ function load(){
 let state=load();
 applyAppearance();
 let goalNotesFor=null;
+let skipFormRead=false;
 const save=()=>{readGoalNotes();localStorage.setItem(KEY,JSON.stringify(state));};
 if(state._migrated){delete state._migrated;save()}
 let sel=key(new Date()),view=parse(sel),addingCat=false,newType='notes';
@@ -1674,6 +1675,7 @@ function ensureDay(g,date){
   return d;
 }
 function readGoalNotes(){
+  if(skipFormRead)return;
   if(!goalNotesFor||goalNotesFor!==sel)return;
   const form=$('entryForm');
   const screen=$('goalScreen');
@@ -1849,7 +1851,21 @@ function goalChip(tag){
   if(tagEdit)kids.push(h('button',{type:'button',class:'chip-x','aria-label':`Delete tag ${tag}`,onclick:ev=>{ev.stopPropagation();deleteGoalTag(tag)}},'×'));
   return h('span',{class:'chip'+(on?' on':'')+(tagEdit?' edit':''),'data-tag':tag,'data-on':on?'true':'false'},...kids);
 }
-function itemCell(g,item,editable){
+function moveGoalItem(goalId,itemId,dir){
+  readGoalNotes();
+  const g=goalById(goalId);
+  if(!g)return;
+  const items=g.items||[];
+  const i=items.findIndex(it=>it.id===itemId);
+  const j=i+dir;
+  if(i<0||j<0||j>=items.length)return;
+  const swap=items[i];
+  items[i]=items[j];
+  items[j]=swap;
+  save();
+  render();
+}
+function itemCell(g,item,editable,index,count){
   const label=(item.name||'').trim()||'Item';
   if(!editable||!itemEdit)return h('th',{scope:'row',class:'item-name'},label);
   if(itemRenaming===item.id){
@@ -1865,6 +1881,8 @@ function itemCell(g,item,editable){
   return h('th',{scope:'row',class:'item-name'},
     h('span',{class:'item-cell'},
       h('button',{type:'button',class:'item-text',onclick:()=>{readGoalNotes();itemRenaming=item.id;render()}},label),
+      h('button',{type:'button',class:'item-move','data-move':'up','aria-label':`Move ${label} up`,disabled:index===0,onclick:ev=>{ev.stopPropagation();moveGoalItem(g.id,item.id,-1)}},'↑'),
+      h('button',{type:'button',class:'item-move','data-move':'down','aria-label':`Move ${label} down`,disabled:index===count-1,onclick:ev=>{ev.stopPropagation();moveGoalItem(g.id,item.id,1)}},'↓'),
       h('button',{type:'button',class:'item-x','aria-label':`Delete item ${label}`,onclick:ev=>{ev.stopPropagation();removeGoalItem(g.id,item.id)}},'×')));
 }
 function weekTable(g,editable){
@@ -1874,8 +1892,9 @@ function weekTable(g,editable){
     h('th',{scope:'col',class:'item-name'}),
     ...dates.map((date,i)=>h('th',{scope:'col',class:[date===today&&'today',date===sel&&date!==today&&'col-sel'].filter(Boolean).join(' '),'data-col':date},
       WEEKDAYS[i],h('br'),String(parse(date).getDate()))));
-  const rows=(g.items||[]).map(item=>h('tr',{'data-item':item.id},
-    itemCell(g,item,editable),
+  const items=g.items||[];
+  const rows=items.map((item,index)=>h('tr',{'data-item':item.id},
+    itemCell(g,item,editable,index,items.length),
     ...dates.map(date=>{
       const on=dayOf(g,date).checks.includes(item.id);
       return h('td',{class:date===today?'today':''},
@@ -1926,6 +1945,7 @@ function saveGoalEntry(ev){
   save();
   forgetImages(dropped);
   freshDraft(null);
+  skipFormRead=true;
   render();
 }
 function editGoalEntry(e){
@@ -1937,6 +1957,7 @@ function editGoalEntry(e){
   renamingTag=null;
   focusTitle=true;
   imageError='';
+  skipFormRead=true;
   render();
 }
 function removeGoalEntry(id){
@@ -1952,6 +1973,7 @@ function removeGoalEntry(id){
     tagEdit=false;
     renamingTag=null;
     freshDraft(null);
+    skipFormRead=true;
   }
   save();
   forgetImages(ids);
@@ -2075,6 +2097,7 @@ function renderGoalScreen(){
         tagEdit=false;
         renamingTag=null;
         freshDraft(null);
+        skipFormRead=true;
         render();
       }},'Cancel'):null),
     h('p',{class:'goal-delete-row'},h('button',{type:'button',class:'goal-delete',id:'deleteGoal',onclick:()=>deleteGoal(g)},'Delete goal')));
@@ -2217,6 +2240,7 @@ function renderDays(){
 }
 function render(){
   readGoalNotes();
+  skipFormRead=false;
   if(openCat&&!currentCat())openCat=null;
   if(openGoal&&!goalById(openGoal))openGoal=null;
   const screen=!!(openCat||openGoal);

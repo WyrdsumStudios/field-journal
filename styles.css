@@ -98,14 +98,15 @@ textarea.goal-note{min-height:6.5rem;resize:vertical}
 .week th{font-size:.72rem;font-weight:normal;color:var(--muted);padding:.2rem .12rem;line-height:1.15;text-align:center}
 .week th.today{color:var(--on-accent, var(--surface));background:var(--accent);border-radius:.4rem}
 .week th.col-sel{color:var(--accent);text-decoration:underline}
-.week .item-name{text-align:left;font-size:.95rem;color:var(--ink);padding:.15rem .75rem .15rem 0;width:auto;max-width:16rem;white-space:normal}
+.week .item-name{text-align:left;font-size:.95rem;color:var(--ink);padding:.15rem .75rem .15rem 0;width:auto;max-width:22rem;white-space:normal}
 .week td{padding:.1rem .05rem;text-align:center}
 .week td.today{background:color-mix(in srgb, var(--accent) 16%, transparent);border-radius:.35rem}
 .check{width:1.85rem;height:1.85rem;margin:0 auto;border:1px solid var(--line);border-radius:.4rem;background:var(--bg);color:var(--on-accent, var(--surface));font-size:1rem;line-height:1;display:flex;align-items:center;justify-content:center}
 .check.on{background:var(--accent);border-color:var(--accent)}
-.item-cell{display:inline-flex;align-items:center;gap:.1rem;max-width:16rem}
+.item-cell{display:inline-flex;align-items:center;gap:.15rem;max-width:22rem}
 .item-text{padding:.1rem .15rem;min-height:2.25rem;text-align:left;color:inherit}
-.item-x{width:1.7rem;height:1.7rem;border-radius:999px;color:var(--muted);border:1px solid var(--line);line-height:1}
+.item-move,.item-x{width:1.7rem;height:1.7rem;border-radius:999px;color:var(--muted);border:1px solid var(--line);line-height:1;padding:0}
+.item-move:disabled{opacity:.35;cursor:default}
 .item-input{width:8rem;max-width:14rem;border:0;border-bottom:1px solid var(--line);background:transparent;padding:.2rem 0;font:inherit;color:inherit}
 .item-add{margin-top:.7rem}
 .goal-name{padding:0;color:inherit;text-align:left;line-height:inherit}
