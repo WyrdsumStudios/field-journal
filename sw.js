@@ -1,9 +1,14 @@
-const CACHE='field-record-v21';
+const CACHE='field-record-v22';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=21',
-  './app.js?v=21',
+  './styles.css?v=22',
+  './app.js?v=22',
+  './vendor/leaflet/leaflet.css?v=22',
+  './vendor/leaflet/leaflet.js?v=22',
+  './vendor/leaflet/images/marker-icon.png',
+  './vendor/leaflet/images/marker-icon-2x.png',
+  './vendor/leaflet/images/marker-shadow.png',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png',
@@ -41,6 +46,19 @@ async function cacheFirst(request){
   }
   return res;
 }
+async function networkFirst(request){
+  try{
+    const res=await fetch(request);
+    if(res&&res.ok){
+      const cache=await caches.open(CACHE);
+      cache.put(request,res.clone());
+    }
+    return res;
+  }catch(e){
+    const hit=await fromCache(request);
+    return hit||new Response('',{status:504});
+  }
+}
 async function page(){
   const cache=await caches.open(CACHE);
   return cache.match('./index.html')||cache.match('./')||cache.match('index.html');
@@ -55,6 +73,8 @@ self.addEventListener('fetch',event=>{
   }
   if(url.origin!==self.location.origin){
     if(url.hostname==='fonts.googleapis.com'||url.hostname==='fonts.gstatic.com')event.respondWith(cacheFirst(req));
+    else if(url.hostname==='tile.openstreetmap.org'||url.hostname.endsWith('.tile.openstreetmap.org'))event.respondWith(cacheFirst(req).catch(()=>new Response('',{status:504})));
+    else if(url.hostname==='nominatim.openstreetmap.org')event.respondWith(networkFirst(req));
     return;
   }
   event.respondWith(cacheFirst(req));
