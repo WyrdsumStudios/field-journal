@@ -1,18 +1,29 @@
 <!DOCTYPE html>
 <html lang="en" data-look="paper"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#2f5d45"><title>Field Record</title>
+<meta name="theme-color" content="#2f5d45">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Field Record">
+<title>Field Record</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=EB+Garamond:ital,wght@0,500;0,600;1,500&family=Exo+2:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Orbitron:wght@500;600&family=Pixelify+Sans:wght@400;500;600&family=Press+Start+2P&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Special+Elite&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=19"></head>
-<body><main class="wrap">
+<link rel="stylesheet" href="styles.css?v=20"></head>
+<body>
+<button id="updateBanner" class="update-banner" type="button" hidden>Update ready, tap to refresh</button>
+<main class="wrap">
 <header class="top" id="top"><div class="grow">
 <p class="eyebrow">Field journal</p>
 <input id="dayTitle" class="day-title" aria-label="Name this day" placeholder="New Day">
 <p id="dateLabel" class="muted"></p></div>
 <div class="top-actions">
+<button id="codeBtn" class="pill" type="button" title="Sync code" aria-haspopup="dialog" aria-expanded="false">Code</button>
 <button id="backupBtn" class="pill" type="button" title="Back up this journal" aria-haspopup="dialog" aria-expanded="false">Backup</button>
 <button id="lookBtn" class="pill" type="button" title="Choose a look" aria-haspopup="dialog" aria-expanded="false">Look</button>
+<div id="codePop" class="code-pop" role="dialog" aria-label="Sync code" hidden></div>
 </div></header>
 <div id="home">
 <div id="backupBanner" class="backup-banner" hidden>
@@ -26,6 +37,7 @@
 <section class="home-block" aria-labelledby="entriesHeading">
 <h2 class="home-heading" id="entriesHeading">Entries</h2>
 <div id="categories" class="cat-grid"></div>
+<div id="selGoals" class="sel-goals" hidden></div>
 </section>
 <section class="card mt8">
 <div class="cal-head"><button id="prevMonth" class="circle" aria-label="Previous month">&#8249;</button>
@@ -63,9 +75,10 @@
 <button type="button" class="btn ghost" id="backupCancelImport">Cancel</button>
 </div>
 <p id="backupError" class="warn" role="alert" hidden></p>
+<div id="syncPanel" class="sync-panel"></div>
 </div></div>
 <div id="lightbox" class="lightbox" hidden>
 <button type="button" id="lightboxClose" class="lightbox-close">Close</button>
 <img id="lightboxImg" alt="Attached image">
 </div>
-<script src="app.js?v=19"></script></body></html>
+<script src="app.js?v=20"></script></body></html>
