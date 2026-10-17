@@ -172,9 +172,12 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .record-when{margin-left:auto}
 .record-open{cursor:pointer}
 .saved-label{font-style:italic}
-.sel-goals,.day-goal{display:flex;flex-direction:column;gap:.55rem}
-.sel-goals{margin-top:1rem}
-.goal-count{margin:0}
+.goal-day-card{cursor:default}
+.goal-day-title{font-size:1.05rem}
+.goal-count{margin:.35rem 0 0}
+.goal-note{margin-top:.75rem;padding-top:.65rem;border-top:1px solid var(--line)}
+.goal-note-title{margin:0}
+.goal-note .note-text{margin:.4rem 0 0}
 .goal-check{display:flex;align-items:center;gap:.45rem;margin:.3rem 0 0}
 .goal-mark{width:.95rem;height:.95rem;border-radius:.2rem;background:var(--accent);color:var(--on-accent,#fbf8f2);display:inline-flex;align-items:center;justify-content:center;font-size:.65rem;line-height:1;flex:0 0 auto}
 html[data-look="retro"] .record-row{background:#8ae04f;color:#14240f;border:3px solid #0e3012;border-radius:.25rem}
