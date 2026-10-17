@@ -6478,7 +6478,8 @@ $('lightbox').addEventListener('click',ev=>{
 $('codeBtn').onclick=ev=>{ev.stopPropagation();if(codeOpen)closeCode();else openCode()};
 document.addEventListener('click',ev=>{
   if(!codeOpen)return;
-  if(ev.target.closest('#codePop')||ev.target.closest('#codeBtn'))return;
+  const path=ev.composedPath();
+  if(path.includes($('codePop'))||path.includes($('codeBtn')))return;
   closeCode();
 });
 document.addEventListener('keydown',ev=>{
