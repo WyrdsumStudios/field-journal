@@ -339,6 +339,13 @@ function weatherHeading(e){
   if(e.temperature!=null&&Number.isFinite(Number(e.temperature)))parts.push(formatTemp(e.temperature));
   return parts.join(' · ')||'Weather log';
 }
+function weatherCustomTitle(e){
+  const title=(e&&e.title||'').trim();
+  if(!title)return '';
+  const cond=conditionById(e.condition);
+  if(cond&&title.toLowerCase()===cond.label.toLowerCase())return '';
+  return title;
+}
 function onPlaceInput(ev){
   placeQuery=ev.target.value;
   const q=placeQuery.trim();
@@ -539,19 +546,46 @@ const TYPES={
       return {title:e.title||'',note:e.note||'',tags:[...(e.tags||[])],images:[...(e.images||[])],condition:cond,temperature:t==null||t===''||!Number.isFinite(Number(t))?null:Number(t)};
     },
     hasContent(d){
-      return !!(d.condition||(d.temperature!=null&&Number.isFinite(Number(d.temperature)))||(d.note||'').trim()||(d.tags||[]).length||(d.images||[]).length);
+      return !!((d.title||'').trim()||d.condition||(d.temperature!=null&&Number.isFinite(Number(d.temperature)))||(d.note||'').trim()||(d.tags||[]).length||(d.images||[]).length);
     },
     write(entry,d){
       entry.condition=conditionById(d.condition)?d.condition:'';
       const t=d.temperature;
       entry.temperature=t==null||t===''||!Number.isFinite(Number(t))?null:Number(t);
+      entry.title=(d.title||'').trim();
       entry.note=(d.note||'').trim();
       entry.tags=[...d.tags];
       entry.images=[...(d.images||[])];
-      entry.title=entry.condition?conditionById(entry.condition).label:'';
     },
     fields(d){return weatherFields(d)},
-    tail(){return h('label',{class:'lbl'},'Notes',h('textarea',{id:'entryNote',class:'field note'}))},
+    tail(d){return h('div',{class:'wx-notes'},
+      h('label',{class:'lbl'},'Title',h('input',{id:'entryTitle',class:'field',value:d.title||'',autocomplete:'off'})),
+      h('label',{class:'lbl'},'Notes',h('textarea',{id:'entryNote',class:'field note'})))},
+    cardBits(e){
+      const custom=weatherCustomTitle(e);
+      return [custom?h('p',{class:'wx-log'},weatherHeading(e)):null,e.note?h('p',{class:'note-text'},e.note):null,tagLine(e.tags),imageGrid(e.images)];
+    }
+  },
+  list:{
+    id:'list',
+    label:'List',
+    tagLabel:'Tags you are watching',
+    blank(){return {title:'',note:'',tags:[],images:[]}},
+    fromEntry(e){return {title:e.title||'',note:e.note||'',tags:[...(e.tags||[])],images:[...(e.images||[])]}},
+    hasContent(d){return !!(d.title.trim()||(d.note||'').trim()||(d.images||[]).length)},
+    write(entry,d){
+      entry.title=d.title.trim();
+      entry.note=(d.note||'').trim();
+      entry.tags=[...d.tags];
+      entry.images=[...(d.images||[])];
+    },
+    fields(d){
+      return [
+        h('label',{class:'lbl'},'Title',h('input',{id:'entryTitle',class:'field',value:d.title,autocomplete:'off'})),
+        h('label',{class:'lbl'},'Note',h('textarea',{id:'entryNote',class:'field note'}))
+      ];
+    },
+    tail(){return null},
     cardBits(e){
       return [e.note?h('p',{class:'note-text'},e.note):null,tagLine(e.tags),imageGrid(e.images)];
     }
@@ -743,6 +777,17 @@ function load(){
           if(JSON.stringify(raw)!==JSON.stringify(next))migrated=true;
           c.sectionTags=next;
         }
+        if(c.type==='list'){
+          if(!Array.isArray(c.lists)){c.lists=[];migrated=true}
+          else{
+            const nextLists=c.lists.filter(l=>l&&typeof l==='object').map(normalizeShopList);
+            if(JSON.stringify(nextLists)!==JSON.stringify(c.lists))migrated=true;
+            c.lists=nextLists;
+          }
+          const nextMeals=normalizeMeals(c.meals);
+          if(JSON.stringify(nextMeals)!==JSON.stringify(c.meals||{}))migrated=true;
+          c.meals=nextMeals;
+        }
         if(c.type==='weather'){
           if(c.place==null){
             if(!Object.prototype.hasOwnProperty.call(c,'place')){c.place=null;migrated=true}
@@ -832,6 +877,11 @@ if(state._migrated){delete state._migrated;save()}
 let sel=key(new Date()),view=parse(sel),addingCat=false,newType='notes';
 let openCat=null,openGoal=null,editingId=null,tagEdit=false,renamingTag=null,focusTitle=false;
 let addingGoal=false,newGoalType='checks',goalEditingId=null,itemEdit=false,itemRenaming=null,goalNameEdit=false;
+let listNameEdit=false,listItemEdit=null,listRenaming=null,listItemRenaming=null;
+let mealEdit=false,mealRenaming=null,mealPicker=null;
+let pendingListName='',pendingMealName='';
+const pendingListItems={};
+const pickIds=new Set();
 let pendingItem='';
 let draft=TYPES.notes.blank(),pendingTag='',imageError='';
 const sessionNew=new Set();
@@ -1352,6 +1402,13 @@ function select(k){
     freshDraft(null);
     pendingTag='';
   }
+  if(changing&&openCat){
+    mealPicker=null;
+    mealRenaming=null;
+    listRenaming=null;
+    listItemRenaming=null;
+    pickIds.clear();
+  }
   sel=k;view=parse(k);picker=false;render();
 }
 function shift(n){const d=parse(sel);d.setDate(d.getDate()+n);select(key(d))}
@@ -1368,6 +1425,7 @@ function openCategory(id){
   tagEdit=false;
   renamingTag=null;
   clearSectionTagUi();
+  resetListUi();
   focusTitle=true;
   freshDraft(catById(id));
   render();
@@ -1383,6 +1441,7 @@ function closeCategory(){
   tagEdit=false;
   renamingTag=null;
   clearSectionTagUi();
+  resetListUi();
   freshDraft(null);
   render();
 }
@@ -1569,7 +1628,7 @@ function imageSection(){
 function entryCard(e){
   const type=typeOf(catById(e.categoryId));
   const editing=e.id===editingId;
-  const heading=type.id==='weather'?weatherHeading(e):(e.title||'Untitled');
+  const heading=type.id==='weather'?(weatherCustomTitle(e)||weatherHeading(e)):(e.title||'Untitled');
   return h('article',{class:'entry-card'+(editing?' editing':''),'data-entry':e.id,onclick:ev=>{
     if(ev.target.closest('button'))return;
     editEntry(e);
@@ -1599,6 +1658,456 @@ function chip(tag){
   const kids=[text];
   if(tagEdit)kids.push(h('button',{type:'button',class:'chip-x','aria-label':`Delete tag ${tag}`,onclick:ev=>{ev.stopPropagation();deleteTag(tag)}},'×'));
   return h('span',{class:'chip'+(on?' on':'')+(tagEdit?' edit':''),'data-tag':tag,'data-on':on?'true':'false'},...kids);
+}
+function readAmount(raw){
+  const s=String(raw==null?'':raw).trim();
+  if(!s)return null;
+  const n=Number(s);
+  return Number.isFinite(n)?n:null;
+}
+function formatAmount(n){
+  const v=Number(n);
+  if(!Number.isFinite(v))return '0';
+  return v.toLocaleString('en-US',{maximumFractionDigits:2});
+}
+function amountSum(items){
+  return (items||[]).reduce((n,it)=>n+(Number.isFinite(Number(it&&it.amount))?Number(it.amount):0),0);
+}
+function normalizeShopList(list){
+  const copy=Object.assign({},list);
+  copy.id=typeof list.id==='string'&&list.id?list.id:uid();
+  copy.name=typeof list.name==='string'?list.name:'';
+  copy.items=(Array.isArray(list.items)?list.items:[]).filter(it=>it&&typeof it==='object').map(it=>{
+    const item=Object.assign({},it);
+    item.id=typeof it.id==='string'&&it.id?it.id:uid();
+    item.text=typeof it.text==='string'?it.text:(typeof it.name==='string'?it.name:'');
+    item.amount=readAmount(it.amount);
+    item.checked=it.checked===true;
+    return item;
+  });
+  return copy;
+}
+function normalizeMeal(meal){
+  const copy=Object.assign({},meal);
+  copy.id=typeof meal.id==='string'&&meal.id?meal.id:uid();
+  copy.name=typeof meal.name==='string'?meal.name:'';
+  copy.items=(Array.isArray(meal.items)?meal.items:[]).filter(it=>it&&typeof it==='object').map(it=>{
+    const item=Object.assign({},it);
+    item.id=typeof it.id==='string'&&it.id?it.id:uid();
+    item.sourceId=typeof it.sourceId==='string'?it.sourceId:'';
+    item.text=typeof it.text==='string'?it.text:'';
+    item.amount=readAmount(it.amount);
+    return item;
+  });
+  return copy;
+}
+function normalizeMeals(raw){
+  const out={};
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return out;
+  Object.keys(raw).forEach(k=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(k)||!Array.isArray(raw[k]))return;
+    out[k]=raw[k].filter(m=>m&&typeof m==='object').map(normalizeMeal);
+  });
+  return out;
+}
+function resetListUi(){
+  listNameEdit=false;
+  listItemEdit=null;
+  listRenaming=null;
+  listItemRenaming=null;
+  mealEdit=false;
+  mealRenaming=null;
+  mealPicker=null;
+  pendingListName='';
+  pendingMealName='';
+  Object.keys(pendingListItems).forEach(k=>delete pendingListItems[k]);
+  pickIds.clear();
+}
+function ensureLists(cat){
+  if(!Array.isArray(cat.lists))cat.lists=[];
+  if(!cat.meals||typeof cat.meals!=='object'||Array.isArray(cat.meals))cat.meals={};
+  return cat;
+}
+function mealsOn(cat,date){
+  const raw=cat&&cat.meals&&cat.meals[date];
+  return Array.isArray(raw)?raw:[];
+}
+function ensureMeals(cat,date){
+  ensureLists(cat);
+  if(!Array.isArray(cat.meals[date]))cat.meals[date]=[];
+  return cat.meals[date];
+}
+function mealDateKeys(){
+  const dates=[];
+  (state.categories||[]).forEach(c=>{
+    if(!c||!c.meals||typeof c.meals!=='object')return;
+    Object.keys(c.meals).forEach(k=>{if(Array.isArray(c.meals[k])&&c.meals[k].length)dates.push(k)});
+  });
+  return dates;
+}
+function findListItem(cat,itemId){
+  for(const list of cat.lists||[]){
+    const item=(list.items||[]).find(it=>it.id===itemId);
+    if(item)return {list,item};
+  }
+  return null;
+}
+function touchEntry(){if($('entryForm'))readDraft()}
+function addShopList(){
+  touchEntry();
+  const cat=currentCat();
+  if(!cat)return;
+  ensureLists(cat);
+  const field=$('newList');
+  const name=(field?field.value:pendingListName).trim();
+  pendingListName='';
+  if(field)field.value='';
+  if(!name){keepField('#newList');return}
+  cat.lists.push({id:uid(),name,items:[]});
+  save();
+  render();
+  keepField('#newList');
+}
+function commitListRename(list,raw){
+  if(listRenaming!==list.id)return;
+  const name=String(raw||'').trim();
+  listRenaming=null;
+  if(name)list.name=name;
+  save();
+  render();
+}
+function removeShopList(listId){
+  touchEntry();
+  const cat=currentCat();
+  if(!cat)return;
+  cat.lists=(cat.lists||[]).filter(l=>l.id!==listId);
+  if(listItemEdit===listId)listItemEdit=null;
+  save();
+  render();
+}
+function addShopItem(listId){
+  touchEntry();
+  const cat=currentCat();
+  const list=cat&&(cat.lists||[]).find(l=>l.id===listId);
+  const selector=`[data-new-item="${listId}"]`;
+  const field=document.querySelector(selector);
+  const name=(field?field.value:(pendingListItems[listId]||'')).trim();
+  pendingListItems[listId]='';
+  if(field)field.value='';
+  if(!list||!name){keepField(selector);return}
+  list.items=list.items||[];
+  list.items.push({id:uid(),text:name,amount:null,checked:false});
+  save();
+  render();
+  keepField(selector);
+}
+function toggleShopItem(listId,itemId){
+  touchEntry();
+  const cat=currentCat();
+  const list=cat&&(cat.lists||[]).find(l=>l.id===listId);
+  const item=list&&(list.items||[]).find(it=>it.id===itemId);
+  if(!item)return;
+  item.checked=!item.checked;
+  save();
+  render();
+}
+function setShopAmount(listId,itemId,raw){
+  const cat=currentCat();
+  const list=cat&&(cat.lists||[]).find(l=>l.id===listId);
+  const item=list&&(list.items||[]).find(it=>it.id===itemId);
+  if(!item)return;
+  item.amount=readAmount(raw);
+  save();
+}
+function commitShopItemRename(list,item,raw){
+  if(listItemRenaming!==item.id)return;
+  const name=String(raw||'').trim();
+  listItemRenaming=null;
+  if(name)item.text=name;
+  save();
+  render();
+}
+function moveShopItem(listId,itemId,dir){
+  touchEntry();
+  const cat=currentCat();
+  const list=cat&&(cat.lists||[]).find(l=>l.id===listId);
+  if(!list)return;
+  const items=list.items||[];
+  const i=items.findIndex(it=>it.id===itemId);
+  const j=i+dir;
+  if(i<0||j<0||j>=items.length)return;
+  const swap=items[i];
+  items[i]=items[j];
+  items[j]=swap;
+  save();
+  render();
+}
+function removeShopItem(listId,itemId){
+  touchEntry();
+  const cat=currentCat();
+  const list=cat&&(cat.lists||[]).find(l=>l.id===listId);
+  if(!list)return;
+  list.items=(list.items||[]).filter(it=>it.id!==itemId);
+  if(listItemRenaming===itemId)listItemRenaming=null;
+  save();
+  render();
+}
+function clearChecked(listId){
+  touchEntry();
+  const cat=currentCat();
+  const list=cat&&(cat.lists||[]).find(l=>l.id===listId);
+  if(!list)return;
+  (list.items||[]).forEach(it=>{it.checked=false});
+  save();
+  render();
+}
+function addMeal(){
+  touchEntry();
+  const cat=currentCat();
+  if(!cat)return;
+  const field=$('newMeal');
+  const name=(field?field.value:pendingMealName).trim();
+  pendingMealName='';
+  if(field)field.value='';
+  if(!name){keepField('#newMeal');return}
+  ensureMeals(cat,sel).push({id:uid(),name,items:[]});
+  save();
+  render();
+  keepField('#newMeal');
+}
+function commitMealRename(meal,raw){
+  if(mealRenaming!==meal.id)return;
+  const name=String(raw||'').trim();
+  mealRenaming=null;
+  if(name)meal.name=name;
+  save();
+  render();
+}
+function removeMeal(mealId){
+  touchEntry();
+  const cat=currentCat();
+  if(!cat)return;
+  const meals=ensureMeals(cat,sel);
+  const i=meals.findIndex(m=>m.id===mealId);
+  if(i>=0)meals.splice(i,1);
+  if(!meals.length)delete cat.meals[sel];
+  if(mealPicker===mealId){mealPicker=null;pickIds.clear()}
+  save();
+  render();
+}
+function moveMeal(mealId,dir){
+  touchEntry();
+  const cat=currentCat();
+  if(!cat)return;
+  const meals=ensureMeals(cat,sel);
+  const i=meals.findIndex(m=>m.id===mealId);
+  const j=i+dir;
+  if(i<0||j<0||j>=meals.length)return;
+  const swap=meals[i];
+  meals[i]=meals[j];
+  meals[j]=swap;
+  save();
+  render();
+}
+function removeMealItem(mealId,itemId){
+  touchEntry();
+  const cat=currentCat();
+  const meal=cat&&mealsOn(cat,sel).find(m=>m.id===mealId);
+  if(!meal)return;
+  meal.items=(meal.items||[]).filter(it=>it.id!==itemId);
+  save();
+  render();
+}
+function toggleMealPicker(mealId){
+  touchEntry();
+  if(mealPicker===mealId){mealPicker=null;pickIds.clear()}
+  else{mealPicker=mealId;pickIds.clear()}
+  render();
+}
+function togglePick(itemId){
+  touchEntry();
+  if(pickIds.has(itemId))pickIds.delete(itemId);else pickIds.add(itemId);
+  render();
+}
+function addPicked(mealId){
+  touchEntry();
+  const cat=currentCat();
+  const meal=cat&&mealsOn(cat,sel).find(m=>m.id===mealId);
+  if(!meal)return;
+  meal.items=meal.items||[];
+  const have=new Set(meal.items.map(it=>it.sourceId).filter(Boolean));
+  pickIds.forEach(id=>{
+    if(have.has(id))return;
+    const found=findListItem(cat,id);
+    if(!found)return;
+    meal.items.push({id:uid(),sourceId:found.item.id,text:found.item.text,amount:found.item.amount});
+    have.add(id);
+  });
+  mealPicker=null;
+  pickIds.clear();
+  save();
+  render();
+}
+function shopItemRow(list,item,index,count){
+  const editing=listItemEdit===list.id;
+  const label=(item.text||'').trim()||'Item';
+  let name;
+  if(editing&&listItemRenaming===item.id){
+    name=h('input',{class:'item-input','aria-label':`Rename ${label}`,value:item.text,
+      onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();commitShopItemRename(list,item,ev.target.value)}
+        if(ev.key==='Escape'){listItemRenaming=null;render()}
+      },
+      onblur:ev=>commitShopItemRename(list,item,ev.target.value)});
+    setTimeout(()=>{name.focus();name.select()},0);
+  }else if(editing){
+    name=h('button',{type:'button',class:'item-text list-item-name',onclick:()=>{touchEntry();listItemRenaming=item.id;render()}},label);
+  }else name=h('span',{class:'list-item-name'},label);
+  const tools=editing?[
+    h('button',{type:'button',class:'item-move','data-move':'up','aria-label':`Move ${label} up`,disabled:index===0,onclick:()=>moveShopItem(list.id,item.id,-1)},'↑'),
+    h('button',{type:'button',class:'item-move','data-move':'down','aria-label':`Move ${label} down`,disabled:index===count-1,onclick:()=>moveShopItem(list.id,item.id,1)},'↓'),
+    h('button',{type:'button',class:'item-x','aria-label':`Delete ${label}`,onclick:()=>removeShopItem(list.id,item.id)},'×')
+  ]:[];
+  return h('div',{class:'list-row','data-item':item.id,'data-checked':item.checked?'true':'false'},
+    h('button',{type:'button',class:'check'+(item.checked?' on':''),'aria-pressed':item.checked?'true':'false','aria-label':`Check ${label}`,onclick:()=>toggleShopItem(list.id,item.id)},item.checked?'✓':''),
+    name,
+    h('input',{class:'field list-amount',type:'number',inputmode:'decimal',step:'any','aria-label':`Number for ${label}`,value:item.amount==null?'':String(item.amount),oninput:ev=>setShopAmount(list.id,item.id,ev.target.value)}),
+    ...tools);
+}
+function listCard(list){
+  const items=list.items||[];
+  let title;
+  if(listNameEdit&&listRenaming===list.id){
+    title=h('input',{class:'item-input list-name-input','aria-label':`Rename ${list.name||'list'}`,value:list.name,
+      onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();commitListRename(list,ev.target.value)}
+        if(ev.key==='Escape'){listRenaming=null;render()}
+      },
+      onblur:ev=>commitListRename(list,ev.target.value)});
+    setTimeout(()=>{title.focus();title.select()},0);
+  }else if(listNameEdit){
+    title=h('button',{type:'button',class:'list-name',onclick:()=>{touchEntry();listRenaming=list.id;render()}},list.name||'List');
+  }else title=h('h3',{class:'list-name'},list.name||'List');
+  return h('article',{class:'card list-card','data-list':list.id},
+    h('div',{class:'row list-head'},
+      title,
+      listNameEdit?h('button',{type:'button',class:'item-x','aria-label':`Delete list ${list.name||'List'}`,onclick:()=>removeShopList(list.id)},'×'):null),
+    items.length?items.map((item,index)=>shopItemRow(list,item,index,items.length)):h('p',{class:'muted sm'},'No items yet.'),
+    h('div',{class:'tag-row'},
+      h('input',{class:'field','data-new-item':list.id,value:pendingListItems[list.id]||'',placeholder:'New item','aria-label':`New item for ${list.name||'list'}`,autocomplete:'off',
+        oninput:ev=>{pendingListItems[list.id]=ev.target.value},
+        onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addShopItem(list.id)}}}),
+      h('button',{type:'button',class:'btn ghost','data-add-item':list.id,onclick:()=>addShopItem(list.id)},'Add'),
+      h('button',{type:'button',class:listItemEdit===list.id?'btn':'btn ghost','data-edit-items':list.id,'aria-pressed':listItemEdit===list.id?'true':'false',onclick:()=>{
+        touchEntry();
+        listItemEdit=listItemEdit===list.id?null:list.id;
+        if(listItemEdit!==list.id)listItemRenaming=null;
+        render();
+      }},listItemEdit===list.id?'Done':'Edit')),
+    h('button',{type:'button',class:'btn ghost clear-checked','data-clear':list.id,onclick:()=>clearChecked(list.id)},'Clear checked'));
+}
+function listBoard(cat){
+  ensureLists(cat);
+  const lists=cat.lists;
+  return h('div',{class:'list-board',id:'listBoard'},
+    h('h2',{class:'block-heading'},'Lists'),
+    h('div',{class:'card list-add'},
+      h('div',{class:'tag-row'},
+        h('input',{id:'newList',class:'field',value:pendingListName,placeholder:'New list','aria-label':'New list',autocomplete:'off',
+          oninput:ev=>{pendingListName=ev.target.value},
+          onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addShopList()}}}),
+        h('button',{type:'button',class:'btn ghost',id:'addList',onclick:addShopList},'Add list'),
+        h('button',{type:'button',class:listNameEdit?'btn':'btn ghost',id:'editLists','aria-pressed':listNameEdit?'true':'false',onclick:()=>{
+          touchEntry();
+          listNameEdit=!listNameEdit;
+          if(!listNameEdit)listRenaming=null;
+          render();
+        }},listNameEdit?'Done':'Edit'))),
+    h('div',{class:'list-grid',id:'listGrid'},
+      lists.length?lists.map(listCard):h('p',{class:'muted',id:'noLists'},'No lists yet.')));
+}
+function mealPickerPanel(cat,meal){
+  const lists=(cat.lists||[]).filter(l=>(l.items||[]).length);
+  return h('div',{class:'pick-panel','data-meal-pick':meal.id},
+    lists.length?lists.map(list=>h('div',{class:'pick-group','data-pick-list':list.id},
+      h('p',{class:'muted sm'},list.name||'List'),
+      ...(list.items||[]).map(item=>{
+        const on=pickIds.has(item.id);
+        const num=item.amount==null?'':` ${formatAmount(item.amount)}`;
+        return h('button',{type:'button',class:'pick-item'+(on?' on':''),'data-pick':item.id,'aria-pressed':on?'true':'false',onclick:()=>togglePick(item.id)},
+          h('span',{class:'pick-box','aria-hidden':'true'},on?'✓':''),(item.text||'Item')+num);
+      }))):h('p',{class:'muted sm'},'No list items yet.'),
+    h('div',{class:'actions'},
+      h('button',{type:'button',class:'btn',id:'addPicked',onclick:()=>addPicked(meal.id)},'Add selected'),
+      h('button',{type:'button',class:'btn ghost',onclick:()=>toggleMealPicker(meal.id)},'Cancel')));
+}
+function mealCard(cat,meal,index,count){
+  const items=meal.items||[];
+  let title;
+  if(mealEdit&&mealRenaming===meal.id){
+    title=h('input',{class:'item-input list-name-input','aria-label':`Rename ${meal.name||'meal'}`,value:meal.name,
+      onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();commitMealRename(meal,ev.target.value)}
+        if(ev.key==='Escape'){mealRenaming=null;render()}
+      },
+      onblur:ev=>commitMealRename(meal,ev.target.value)});
+    setTimeout(()=>{title.focus();title.select()},0);
+  }else if(mealEdit){
+    title=h('button',{type:'button',class:'list-name',onclick:()=>{touchEntry();mealRenaming=meal.id;render()}},meal.name||'Meal');
+  }else title=h('h3',{class:'list-name'},meal.name||'Meal');
+  const tools=mealEdit?[
+    h('button',{type:'button',class:'item-move','data-move':'up','aria-label':`Move ${meal.name||'meal'} up`,disabled:index===0,onclick:()=>moveMeal(meal.id,-1)},'↑'),
+    h('button',{type:'button',class:'item-move','data-move':'down','aria-label':`Move ${meal.name||'meal'} down`,disabled:index===count-1,onclick:()=>moveMeal(meal.id,1)},'↓'),
+    h('button',{type:'button',class:'item-x','aria-label':`Delete meal ${meal.name||'Meal'}`,onclick:()=>removeMeal(meal.id)},'×')
+  ]:[];
+  return h('article',{class:'card meal-card','data-meal':meal.id},
+    h('div',{class:'row list-head'},title,...tools),
+    items.length?items.map(it=>h('div',{class:'meal-line','data-meal-item':it.id},
+      h('span',{class:'meal-line-text'},(it.text||'').trim()||'Item'),
+      it.amount!=null?h('span',{class:'meal-line-num'},formatAmount(it.amount)):null,
+      h('button',{type:'button',class:'item-x','aria-label':`Remove ${(it.text||'item')}`,onclick:()=>removeMealItem(meal.id,it.id)},'×'))):h('p',{class:'muted sm'},'Nothing added yet.'),
+    h('p',{class:'meal-total'},`Total ${formatAmount(amountSum(items))}`),
+    h('button',{type:'button',class:'btn ghost','data-add-from':meal.id,onclick:()=>toggleMealPicker(meal.id)},mealPicker===meal.id?'Close lists':'Add from lists'),
+    mealPicker===meal.id?mealPickerPanel(cat,meal):null);
+}
+function mealBoard(cat){
+  const meals=mealsOn(cat,sel);
+  return h('div',{class:'meal-board',id:'mealBoard'},
+    h('h2',{class:'block-heading'},'Meals'),
+    h('div',{class:'card list-add'},
+      h('div',{class:'tag-row'},
+        h('input',{id:'newMeal',class:'field',value:pendingMealName,placeholder:'New meal','aria-label':'New meal',autocomplete:'off',
+          oninput:ev=>{pendingMealName=ev.target.value},
+          onkeydown:ev=>{if(ev.key==='Enter'){ev.preventDefault();addMeal()}}}),
+        h('button',{type:'button',class:'btn ghost',id:'addMeal',onclick:addMeal},'Add meal'),
+        h('button',{type:'button',class:mealEdit?'btn':'btn ghost',id:'editMeals','aria-pressed':mealEdit?'true':'false',onclick:()=>{
+          touchEntry();
+          mealEdit=!mealEdit;
+          if(!mealEdit)mealRenaming=null;
+          render();
+        }},mealEdit?'Done':'Edit'))),
+    meals.length?h('div',{class:'meal-grid',id:'mealGrid'},...meals.map((meal,index)=>mealCard(cat,meal,index,meals.length))):h('p',{class:'muted',id:'noMeals'},'No meals for this day.'),
+    meals.length?h('p',{class:'card day-total',id:'dayTotal'},`Day total ${formatAmount(amountSum(meals.flatMap(m=>m.items||[])))}`):null);
+}
+function mealReview(cat,date){
+  const meals=mealsOn(cat,date);
+  if(!meals.length)return null;
+  return h('div',{class:'day-meals','data-meals':date},
+    ...meals.map(m=>h('div',{class:'day-meal','data-meal':m.id},
+      h('p',{class:'day-meal-name'},m.name||'Meal'),
+      ...(m.items||[]).map(it=>h('p',{class:'day-meal-item'},it.amount!=null?`${(it.text||'Item')} · ${formatAmount(it.amount)}`:(it.text||'Item'))),
+      h('p',{class:'meal-total'},`Total ${formatAmount(amountSum(m.items))}`))),
+    h('p',{class:'day-total'},`Day total ${formatAmount(amountSum(meals.flatMap(m=>m.items||[])))}`));
+}
+function listHomeBits(cat){
+  const lists=(cat.lists||[]).map(list=>{
+    const n=(list.items||[]).length;
+    return h('p',{class:'home-list','data-list':list.id},`${list.name||'List'} · ${n} item${n===1?'':'s'}`);
+  });
+  const meals=mealsOn(cat,sel);
+  const lines=meals.map(m=>h('p',{class:'home-meal','data-meal':m.id},`${m.name||'Meal'} · Total ${formatAmount(amountSum(m.items))}`));
+  const day=meals.length?h('p',{class:'home-day-total',id:'homeDayTotal'},`Day total ${formatAmount(amountSum(meals.flatMap(m=>m.items||[])))}`):null;
+  return [...lists,...lines,day];
 }
 function renderCatScreen(){
   const cat=currentCat();
@@ -1645,6 +2154,8 @@ function renderCatScreen(){
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
     type.id==='weather'?weatherPanel(cat):null,
+    type.id==='list'?listBoard(cat):null,
+    type.id==='list'?mealBoard(cat):null,
     form,
     h('div',{class:'entry-list',id:'catEntries'},
       list.length?list.map(entryCard):h('p',{class:'muted',id:'catEmpty'},'Nothing written.')));
@@ -1658,8 +2169,10 @@ function renderCatScreen(){
 function entryPreview(e){
   const kind=typeOf(catById(e.categoryId)).id;
   if(kind==='weather'){
+    const custom=weatherCustomTitle(e);
     return h('div',{class:'preview-block'},
-      h('p',{class:'preview-title wx-log'},weatherHeading(e)),
+      h('p',{class:'preview-title'+(custom?'':' wx-log')},custom||weatherHeading(e)),
+      custom?h('p',{class:'wx-log sm'},weatherHeading(e)):null,
       e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
   }
   const timer=kind==='timer';
@@ -2158,7 +2671,8 @@ function catCard(c){
     h('div',{class:'row'},h('h3',null,c.name),h('button',{class:'x',type:'button','aria-label':`Delete ${c.name}`,onclick:()=>deleteCategory(c)},'Delete')),
     type.id==='notes'?null:h('p',{class:'muted sm'},type.label),
     type.id==='weather'?h('div',{class:'wx-slot','data-wx-slot':c.id},weatherReadout(c)):null,
-    list.length?list.map(entryPreview):h('p',{class:'muted'},'Nothing written for this day.'),
+    type.id==='list'?listHomeBits(c):null,
+    list.length?list.map(entryPreview):(type.id==='list'&&((c.lists||[]).length||mealsOn(c,sel).length)?null:h('p',{class:'muted'},'Nothing written for this day.')),
     h('p',{class:'accent sm open-hint'},'Open'));
 }
 function renderCats(){
@@ -2174,6 +2688,7 @@ function renderCats(){
       const cat={id:uid(),name:n,tags:[],type};
       if(type==='timer'){cat.sectionNames=['Notes'];cat.sectionTags={};}
       if(type==='weather')cat.place=null;
+      if(type==='list'){cat.lists=[];cat.meals={};}
       state.categories.push(cat);
       addingCat=false;
       newType='notes';
@@ -2223,7 +2738,7 @@ function renderCal(){
         }},name))));
   }else box.replaceChildren();
   const g=$('calGrid'),y=view.getFullYear(),m=view.getMonth(),first=new Date(y,m,1).getDay(),n=new Date(y,m+1,0).getDate(),today=key(new Date());
-  const has=new Set([...state.entries.map(e=>e.date),...Object.keys(state.dayTitles)]);
+  const has=new Set([...state.entries.map(e=>e.date),...Object.keys(state.dayTitles),...mealDateKeys()]);
   (state.goals||[]).forEach(g=>{
     Object.entries(g.days||{}).forEach(([k,d])=>{if(d&&(d.checks||[]).length)has.add(k)});
     (g.entries||[]).forEach(e=>{if(e&&e.date&&((e.title||'').trim()||(e.note||'').trim()||(e.tags||[]).length||(e.images||[]).length))has.add(e.date)});
@@ -2238,13 +2753,13 @@ function renderCal(){
 }
 function toggleDay(k){if(expanded.has(k))expanded.delete(k);else expanded.add(k);render()}
 function renderDays(){
-  const ks=[...new Set([...Object.keys(state.dayTitles),...state.entries.map(e=>e.date)])].sort().reverse();
+  const ks=[...new Set([...Object.keys(state.dayTitles),...state.entries.map(e=>e.date),...mealDateKeys()])].sort().reverse();
   $('daysEmpty').hidden=ks.length>0;
   $('daysList').replaceChildren(...ks.map(k=>{
     const count=state.entries.filter(e=>e.date===k).length;
     const open=expanded.has(k);
     const known=new Set(state.categories.map(c=>c.id));
-    const groups=state.categories.map(c=>({name:c.name,entries:dayEntries(k,c.id)}));
+    const groups=state.categories.map(c=>({cat:c,name:c.name,entries:dayEntries(k,c.id)}));
     const orphans=state.entries.filter(e=>e.date===k&&!known.has(e.categoryId));
     if(orphans.length)groups.push({name:'Other',entries:orphans.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))});
     const head=h('div',{class:'day-item',role:'button',tabindex:'0','aria-expanded':open?'true':'false',onclick:ev=>{
@@ -2261,9 +2776,15 @@ function renderDays(){
         h('div',{class:'muted sm'},`${count} entr${count===1?'y':'ies'}`),
         h('button',{type:'button',class:'open-day',onclick:ev=>{ev.stopPropagation();select(k)}},'Open day')));
     const body=open?h('div',{class:'day-body'},
-      groups.length?groups.map(g=>h('div',{class:'day-cat','data-cat-name':g.name},
-        h('h3',{class:'day-cat-name'},g.name),
-        g.entries.length?g.entries.map(entryCard):h('p',{class:'muted nothing'},'Nothing written.'))):h('p',{class:'muted'},'No categories yet.')):null;
+      groups.length?groups.map(g=>{
+        const review=g.cat&&g.cat.type==='list'?mealReview(g.cat,k):null;
+        const entries=g.entries.length?g.entries.map(entryCard):null;
+        return h('div',{class:'day-cat','data-cat-name':g.name},
+          h('h3',{class:'day-cat-name'},g.name),
+          review,
+          entries,
+          !review&&!entries?h('p',{class:'muted nothing'},'Nothing written.'):null);
+      }):h('p',{class:'muted'},'No categories yet.')):null;
     return h('div',{class:'day-block'+(k===sel?' sel':''),'data-day':k},head,body);
   }));
 }
@@ -2284,6 +2805,10 @@ function backupDayCount(journal){
   const days=new Set();
   (journal.entries||[]).forEach(e=>{if(e&&e.date)days.add(e.date)});
   Object.keys(journal.dayTitles||{}).forEach(k=>{if(k)days.add(k)});
+  (journal.categories||[]).forEach(c=>{
+    if(!c||!c.meals||typeof c.meals!=='object')return;
+    Object.keys(c.meals).forEach(k=>{if(Array.isArray(c.meals[k])&&c.meals[k].length)days.add(k)});
+  });
   (journal.goals||[]).forEach(g=>{
     if(!g||typeof g!=='object')return;
     (g.entries||[]).forEach(e=>{if(e&&e.date)days.add(e.date)});
