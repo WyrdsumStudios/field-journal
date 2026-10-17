@@ -4,14 +4,21 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=EB+Garamond:ital,wght@0,500;0,600;1,500&family=Exo+2:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Orbitron:wght@500;600&family=Pixelify+Sans:wght@400;500;600&family=Press+Start+2P&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Special+Elite&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=16"></head>
+<link rel="stylesheet" href="styles.css?v=17"></head>
 <body><main class="wrap">
 <header class="top" id="top"><div class="grow">
 <p class="eyebrow">Field journal</p>
 <input id="dayTitle" class="day-title" aria-label="Name this day" placeholder="New Day">
 <p id="dateLabel" class="muted"></p></div>
-<button id="lookBtn" class="pill" type="button" title="Choose a look" aria-haspopup="dialog" aria-expanded="false">Look</button></header>
+<div class="top-actions">
+<button id="backupBtn" class="pill" type="button" title="Back up this journal" aria-haspopup="dialog" aria-expanded="false">Backup</button>
+<button id="lookBtn" class="pill" type="button" title="Choose a look" aria-haspopup="dialog" aria-expanded="false">Look</button>
+</div></header>
 <div id="home">
+<div id="backupBanner" class="backup-banner" hidden>
+<p>It's been a while since your last backup</p>
+<div class="actions"><button type="button" class="btn" id="backupNow">Export now</button><button type="button" class="btn ghost" id="backupLater">Later</button></div>
+</div>
 <section class="home-block" aria-labelledby="goalsHeading">
 <h2 class="home-heading" id="goalsHeading">Goals</h2>
 <div id="goals" class="goal-grid"></div>
@@ -39,8 +46,26 @@
 <div id="lookList" class="look-list"></div>
 <div id="lookCustom"></div>
 </div></div>
+<div id="backupModal" class="look-modal" hidden>
+<div class="look-panel card backup-panel" role="dialog" aria-modal="true" aria-labelledby="backupTitle">
+<div class="row look-head"><h2 id="backupTitle">Backup</h2><button type="button" id="backupClose" class="btn ghost">Close</button></div>
+<p class="muted sm">One file keeps this journal, your themes, and every saved image.</p>
+<p id="backupLast" class="muted sm">Last backup: none yet</p>
+<div class="actions">
+<button type="button" class="btn" id="exportBackup">Export backup</button>
+<button type="button" class="btn ghost" id="importBackup">Import backup</button>
+<input id="importFile" class="file-input" type="file" accept="application/json,.json" aria-label="Choose a backup file">
+</div>
+<p id="backupSummary" class="backup-summary" hidden></p>
+<p id="backupReplaceNote" hidden>This replaces everything on this device</p>
+<div id="backupConfirm" class="actions" hidden>
+<button type="button" class="btn" id="backupReplace">Replace</button>
+<button type="button" class="btn ghost" id="backupCancelImport">Cancel</button>
+</div>
+<p id="backupError" class="warn" role="alert" hidden></p>
+</div></div>
 <div id="lightbox" class="lightbox" hidden>
 <button type="button" id="lightboxClose" class="lightbox-close">Close</button>
 <img id="lightboxImg" alt="Attached image">
 </div>
-<script src="app.js?v=16"></script></body></html>
+<script src="app.js?v=17"></script></body></html>

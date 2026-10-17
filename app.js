@@ -814,6 +814,10 @@ function load(){
         if(!state.skin){state.look='paper';repair=true}
       }else if(!LOOK_IDS.has(state.look)){state.look='paper';state.skin=null;repair=true}
       if(migrated||repair)state._migrated=true;
+      const backed=Number(state.lastBackupAt);
+      state.lastBackupAt=Number.isFinite(backed)&&backed>0?backed:0;
+      const snooze=Number(state.backupSnoozeUntil);
+      state.backupSnoozeUntil=Number.isFinite(snooze)&&snooze>0?snooze:0;
       return state;
     }
   }catch(e){}
@@ -832,7 +836,8 @@ let pendingItem='';
 let draft=TYPES.notes.blank(),pendingTag='',imageError='';
 const sessionNew=new Set();
 const expanded=new Set();
-let picker=false,pickerYear=view.getFullYear(),lookOpen=false;
+let picker=false,pickerYear=view.getFullYear(),lookOpen=false,backupOpen=false;
+let pendingImport=null,backupBusy=false;
 const urlCache=new Map();
 let dbPromise=null;
 let renamingTheme=null;
@@ -951,6 +956,30 @@ function idbReq(mode,run){
     const req=run(tx.objectStore(IMG_STORE));
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error);
+  }));
+}
+function allImageRecords(){
+  return openDb().then(db=>new Promise((resolve,reject)=>{
+    const out=[];
+    const req=db.transaction(IMG_STORE,'readonly').objectStore(IMG_STORE).openCursor();
+    req.onsuccess=()=>{
+      const cursor=req.result;
+      if(!cursor){resolve(out);return}
+      if(cursor.key!=null&&cursor.key!==''&&cursor.value instanceof Blob)out.push({id:String(cursor.key),blob:cursor.value});
+      cursor.continue();
+    };
+    req.onerror=()=>reject(req.error);
+  }));
+}
+function replaceImages(items){
+  return openDb().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(IMG_STORE,'readwrite');
+    const store=tx.objectStore(IMG_STORE);
+    store.clear();
+    items.forEach(item=>store.put(item.blob,item.id));
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error||new Error('images'));
+    tx.onabort=()=>reject(tx.error||new Error('images'));
   }));
 }
 function putImage(id,blob){return idbReq('readwrite',s=>s.put(blob,id))}
@@ -2238,6 +2267,263 @@ function renderDays(){
     return h('div',{class:'day-block'+(k===sel?' sel':''),'data-day':k},head,body);
   }));
 }
+const BACKUP_WEEK=7*24*60*60*1000;
+const BACKUP_SNOOZE=3*24*60*60*1000;
+const BACKUP_BAD='That file is not a Field Record backup. Nothing was changed.';
+function backupDue(){
+  if(state.backupSnoozeUntil>Date.now())return false;
+  if(!state.lastBackupAt)return true;
+  return Date.now()-state.lastBackupAt>BACKUP_WEEK;
+}
+function lastBackupText(){
+  if(!state.lastBackupAt)return 'Last backup: none yet';
+  const d=new Date(state.lastBackupAt);
+  return 'Last backup: '+d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+function backupDayCount(journal){
+  const days=new Set();
+  (journal.entries||[]).forEach(e=>{if(e&&e.date)days.add(e.date)});
+  Object.keys(journal.dayTitles||{}).forEach(k=>{if(k)days.add(k)});
+  (journal.goals||[]).forEach(g=>{
+    if(!g||typeof g!=='object')return;
+    (g.entries||[]).forEach(e=>{if(e&&e.date)days.add(e.date)});
+    const raw=g.days&&typeof g.days==='object'&&!Array.isArray(g.days)?g.days:{};
+    Object.keys(raw).forEach(k=>{
+      const day=raw[k];
+      if(day&&Array.isArray(day.checks)&&day.checks.length)days.add(k);
+    });
+  });
+  return days.size;
+}
+function backupEntryCount(journal){
+  const goals=(journal.goals||[]).reduce((n,g)=>n+(g&&Array.isArray(g.entries)?g.entries.length:0),0);
+  return (Array.isArray(journal.entries)?journal.entries.length:0)+goals;
+}
+function blobToBase64(blob){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const text=String(reader.result||'');
+      const i=text.indexOf(',');
+      resolve(i>=0?text.slice(i+1):text);
+    };
+    reader.onerror=()=>reject(reader.error||new Error('read'));
+    reader.readAsDataURL(blob);
+  });
+}
+function decodeBase64(data){
+  if(typeof data!=='string')throw new Error('data');
+  const clean=data.replace(/\s/g,'');
+  if(!clean||!/^[A-Za-z0-9+/]+={0,2}$/.test(clean)||clean.length%4===1)throw new Error('data');
+  const bin=atob(clean);
+  const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  return bytes;
+}
+function parseBackup(text){
+  let raw;
+  try{raw=JSON.parse(text)}catch(e){throw new Error(BACKUP_BAD)}
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)||raw.format!==1)throw new Error(BACKUP_BAD);
+  const exportedAt=Date.parse(raw.exportedAt);
+  if(!Number.isFinite(exportedAt))throw new Error(BACKUP_BAD);
+  const journal=raw.journal;
+  if(!journal||typeof journal!=='object'||Array.isArray(journal)||!Array.isArray(journal.categories))throw new Error(BACKUP_BAD);
+  if(journal.entries!=null&&!Array.isArray(journal.entries))throw new Error(BACKUP_BAD);
+  if(journal.goals!=null&&!Array.isArray(journal.goals))throw new Error(BACKUP_BAD);
+  if(journal.themes!=null&&!Array.isArray(journal.themes))throw new Error(BACKUP_BAD);
+  if(journal.dayTitles!=null&&(typeof journal.dayTitles!=='object'||Array.isArray(journal.dayTitles)))throw new Error(BACKUP_BAD);
+  if(!Array.isArray(raw.images))throw new Error(BACKUP_BAD);
+  const seen=new Set();
+  const images=raw.images.map(item=>{
+    if(!item||typeof item!=='object'||Array.isArray(item))throw new Error(BACKUP_BAD);
+    const id=typeof item.id==='string'?item.id:'';
+    if(!id||id.length>200||seen.has(id))throw new Error(BACKUP_BAD);
+    seen.add(id);
+    const type=typeof item.type==='string'&&item.type.trim()?item.type.trim():'application/octet-stream';
+    let bytes;
+    try{bytes=decodeBase64(item.data)}catch(e){throw new Error(BACKUP_BAD)}
+    if(!bytes.length)throw new Error(BACKUP_BAD);
+    return {id,blob:new Blob([bytes],{type})};
+  });
+  const summary={
+    days:backupDayCount(journal),
+    entries:backupEntryCount(journal),
+    images:images.length,
+    exportedAt
+  };
+  return {journal,images,summary};
+}
+function summaryLine(summary){
+  const days=`${summary.days} day${summary.days===1?'':'s'}`;
+  const entries=`${summary.entries} entr${summary.entries===1?'y':'ies'}`;
+  const images=`${summary.images} image${summary.images===1?'':'s'}`;
+  const when=new Date(summary.exportedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  return `${days}, ${entries}, ${images}. Exported ${when}.`;
+}
+function setBackupError(message){
+  const el=$('backupError');
+  if(!el)return;
+  el.hidden=!message;
+  el.textContent=message||'';
+}
+function clearImportPrompt(){
+  pendingImport=null;
+  const summary=$('backupSummary');
+  const note=$('backupReplaceNote');
+  const row=$('backupConfirm');
+  if(summary)summary.hidden=true;
+  if(note)note.hidden=true;
+  if(row)row.hidden=true;
+}
+function syncBackup(){
+  const last=$('backupLast');
+  if(last)last.textContent=lastBackupText();
+  const banner=$('backupBanner');
+  if(banner)banner.hidden=!backupDue();
+  const btn=$('backupBtn');
+  if(btn)btn.setAttribute('aria-expanded',backupOpen?'true':'false');
+  const modal=$('backupModal');
+  if(modal)modal.hidden=!backupOpen;
+}
+function downloadText(name,text){
+  const blob=new Blob([text],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+async function exportBackup(){
+  if(backupBusy)return;
+  backupBusy=true;
+  setBackupError('');
+  clearImportPrompt();
+  try{
+    const records=await allImageRecords();
+    const images=[];
+    for(const record of records)images.push({id:record.id,type:record.blob.type||'application/octet-stream',data:await blobToBase64(record.blob)});
+    const when=Date.now();
+    const journal=JSON.parse(JSON.stringify(state));
+    journal.lastBackupAt=when;
+    journal.backupSnoozeUntil=0;
+    const payload={format:1,exportedAt:new Date(when).toISOString(),journal,images};
+    downloadText(`field-record-backup-${key(new Date(when))}.json`,JSON.stringify(payload));
+    state.lastBackupAt=when;
+    state.backupSnoozeUntil=0;
+    save();
+    syncBackup();
+  }catch(e){
+    setBackupError('Could not export a backup. Nothing was changed.');
+  }finally{
+    backupBusy=false;
+  }
+}
+function resetJournalView(){
+  openCat=null;
+  openGoal=null;
+  editingId=null;
+  goalEditingId=null;
+  tagEdit=false;
+  renamingTag=null;
+  itemEdit=false;
+  itemRenaming=null;
+  goalNameEdit=false;
+  addingCat=false;
+  addingGoal=false;
+  pendingItem='';
+  pendingTag='';
+  focusTitle=false;
+  imageError='';
+  renamingTheme=null;
+  bgError='';
+  picker=false;
+  sessionNew.clear();
+  expanded.clear();
+  freshDraft(null);
+}
+async function confirmImport(){
+  const pending=pendingImport;
+  if(!pending||backupBusy)return;
+  backupBusy=true;
+  setBackupError('');
+  const previousJournal=localStorage.getItem(KEY);
+  let previousImages=[];
+  try{
+    previousImages=await allImageRecords();
+    await replaceImages(pending.images);
+    localStorage.setItem(KEY,JSON.stringify(pending.journal));
+  }catch(e){
+    try{
+      if(previousJournal==null)localStorage.removeItem(KEY);
+      else localStorage.setItem(KEY,previousJournal);
+      await replaceImages(previousImages);
+    }catch(err){}
+    backupBusy=false;
+    setBackupError('Could not restore that backup. Nothing was changed.');
+    return;
+  }
+  [...urlCache.values()].forEach(url=>URL.revokeObjectURL(url));
+  urlCache.clear();
+  state=load();
+  const migrated=!!state._migrated;
+  if(migrated)delete state._migrated;
+  resetJournalView();
+  if(migrated)save();
+  applyAppearance();
+  clearImportPrompt();
+  backupBusy=false;
+  render();
+}
+function chooseBackupFile(ev){
+  const input=ev.target;
+  const file=input.files&&input.files[0];
+  input.value='';
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const parsed=parseBackup(String(reader.result||''));
+      pendingImport=parsed;
+      setBackupError('');
+      const summary=$('backupSummary');
+      const note=$('backupReplaceNote');
+      const row=$('backupConfirm');
+      if(summary){summary.hidden=false;summary.textContent=summaryLine(parsed.summary)}
+      if(note)note.hidden=false;
+      if(row)row.hidden=false;
+    }catch(e){
+      clearImportPrompt();
+      setBackupError(BACKUP_BAD);
+    }
+  };
+  reader.onerror=()=>{
+    clearImportPrompt();
+    setBackupError('That file could not be read. Nothing was changed.');
+  };
+  reader.readAsText(file);
+}
+function openBackup(){
+  if(lookOpen)closeLook();
+  backupOpen=true;
+  setBackupError('');
+  syncBackup();
+  const b=$('backupClose');
+  if(b)b.focus();
+}
+function closeBackup(){
+  backupOpen=false;
+  clearImportPrompt();
+  setBackupError('');
+  syncBackup();
+}
+function snoozeBackup(){
+  state.backupSnoozeUntil=Date.now()+BACKUP_SNOOZE;
+  save();
+  syncBackup();
+}
 function render(){
   readGoalNotes();
   skipFormRead=false;
@@ -2255,6 +2541,7 @@ function render(){
   if(openCat)renderCatScreen();else{$('catScreen').replaceChildren();$('catScreen').removeAttribute('data-type')}
   if(openGoal)renderGoalScreen();else{$('goalScreen').replaceChildren()}
   goalNotesFor=sel;
+  syncBackup();
   hydrateImages(document);
   ensureVisibleWeather();
   prefillTemp();
@@ -2531,6 +2818,7 @@ function renderLook(){
   if(host)host.replaceChildren(customizeForm());
 }
 function openLook(){
+  if(backupOpen)closeBackup();
   lookOpen=true;
   bgError='';
   renderLook();
@@ -2541,11 +2829,22 @@ function closeLook(){lookOpen=false;renderLook()}
 $('lookBtn').onclick=openLook;
 $('lookClose').onclick=closeLook;
 $('lookModal').addEventListener('click',ev=>{if(ev.target.id==='lookModal')closeLook()});
+$('backupBtn').onclick=openBackup;
+$('backupClose').onclick=closeBackup;
+$('backupNow').onclick=()=>exportBackup();
+$('backupLater').onclick=snoozeBackup;
+$('exportBackup').onclick=()=>exportBackup();
+$('importBackup').onclick=()=>$('importFile').click();
+$('importFile').addEventListener('change',chooseBackupFile);
+$('backupReplace').onclick=()=>confirmImport();
+$('backupCancelImport').onclick=()=>{clearImportPrompt();setBackupError('')};
+$('backupModal').addEventListener('click',ev=>{if(ev.target.id==='backupModal')closeBackup()});
 $('lightbox').addEventListener('click',ev=>{
   if(ev.target.id==='lightbox'||ev.target.id==='lightboxClose')closeLightbox();
 });
 document.addEventListener('keydown',ev=>{
   if(ev.key==='Escape'){
+    if(backupOpen){closeBackup();return}
     if(lookOpen){closeLook();return}
     if(!$('lightbox').hidden)closeLightbox();
     return;
