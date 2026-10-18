@@ -901,9 +901,9 @@ function load(){
           c.meals=nextMeals;
         }
         if(c.type==='tracker'){
-          const before=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle});
+          const before=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt});
           normalizeTracker(c);
-          const after=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle});
+          const after=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt});
           if(before!==after)migrated=true;
         }
         if(c.type==='relationships'){
@@ -2347,13 +2347,39 @@ function normalizeShifts(raw){
   });
   return out;
 }
+function defaultPeriodFlag(name){
+  const n=String(name||'').trim().toLowerCase();
+  if(/\bspotting\b|\bspot\b/.test(n))return false;
+  if(/\blight\b|\bmedium\b|\bheavy\b/.test(n))return true;
+  return false;
+}
 function normalizeFlowOption(raw){
   const copy=Object.assign({},raw||{});
   copy.id=typeof raw.id==='string'&&raw.id?raw.id:uid();
   copy.name=typeof raw.name==='string'?raw.name:'';
   copy.color=hexOf(raw.color,'#2f5d45');
   copy.shape=FLOW_SHAPES.includes(raw.shape)?raw.shape:'dot';
+  copy.period=typeof raw.period==='boolean'?raw.period:defaultPeriodFlag(copy.name);
   return copy;
+}
+function normalizePeriodMarks(raw){
+  const out={};
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return out;
+  Object.keys(raw).forEach(k=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(k))return;
+    if(raw[k]===true||raw[k]===false)out[k]=raw[k];
+  });
+  return out;
+}
+function normalizePeriodMarkAt(raw){
+  const out={};
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return out;
+  Object.keys(raw).forEach(k=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(k))return;
+    const n=Number(raw[k]);
+    if(Number.isFinite(n))out[k]=n;
+  });
+  return out;
 }
 function normalizeFlowLogs(raw,ids){
   const out={};
@@ -2388,9 +2414,11 @@ function normalizeTracker(c){
   if(c.tracker!=='flow')return;
   const legacy=c.flow&&typeof c.flow==='object'&&!Array.isArray(c.flow)&&Object.keys(c.flow).some(k=>typeof c.flow[k]==='string');
   let options=Array.isArray(c.flowOptions)?c.flowOptions.filter(o=>o&&typeof o==='object').map(normalizeFlowOption):[];
-  if((wasPeriod||legacy)&&!options.length)options=legacyPeriodOptions();
+  if((wasPeriod||legacy)&&!options.length)options=legacyPeriodOptions().map(normalizeFlowOption);
   c.flowOptions=options;
   c.flow=normalizeFlowLogs(c.flow,new Set(options.map(o=>o.id)));
+  c.periodMarks=normalizePeriodMarks(c.periodMarks);
+  c.periodMarkAt=normalizePeriodMarkAt(c.periodMarkAt);
   if(wasPeriod)c.showCycle=true;
   else if(c.showCycle!==true)c.showCycle=false;
 }
@@ -2532,16 +2560,59 @@ function formatDayCount(n){
   const text=Number.isInteger(v)?String(v):v.toFixed(1);
   return `${text} day${v===1?'':'s'}`;
 }
+function periodMark(cat,date){
+  const v=cat&&cat.periodMarks&&cat.periodMarks[date];
+  return v===true||v===false?v:null;
+}
+function dayCountsAsPeriod(cat,date){
+  if(periodMark(cat,date)===true)return true;
+  return flowLogsOn(cat,date).some(log=>{
+    const opt=flowOptionById(cat,log.optionId);
+    return !!(opt&&opt.period);
+  });
+}
+function daySpottingBridge(cat,date){
+  if(periodMark(cat,date)===true||dayCountsAsPeriod(cat,date))return false;
+  return flowLogsOn(cat,date).length>0;
+}
 function periodRuns(cat){
   const flow=cat&&cat.flow&&typeof cat.flow==='object'?cat.flow:{};
-  const days=Object.keys(flow).filter(k=>Array.isArray(flow[k])&&flow[k].length&&/^\d{4}-\d{2}-\d{2}$/.test(k)).sort();
+  const marks=cat&&cat.periodMarks&&typeof cat.periodMarks==='object'?cat.periodMarks:{};
+  const dates=new Set();
+  Object.keys(flow).forEach(k=>{if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&Array.isArray(flow[k])&&flow[k].length)dates.add(k)});
+  Object.keys(marks).forEach(k=>{if((marks[k]===true||marks[k]===false)&&/^\d{4}-\d{2}-\d{2}$/.test(k))dates.add(k)});
+  const counted=[...dates].filter(k=>dayCountsAsPeriod(cat,k)).sort();
+  const groups=[];
+  counted.forEach(k=>{
+    if(!groups.length){groups.push([k]);return}
+    const prev=groups[groups.length-1][groups[groups.length-1].length-1];
+    let d=shiftDate(prev,1),join=true;
+    while(d<k){
+      if(!daySpottingBridge(cat,d)){join=false;break}
+      d=shiftDate(d,1);
+    }
+    if(join)groups[groups.length-1].push(k);
+    else groups.push([k]);
+  });
   const runs=[];
-  days.forEach(k=>{
-    if(runs.length&&shiftDate(runs[runs.length-1].end,1)===k){
-      const run=runs[runs.length-1];
-      run.end=k;
-      run.length+=1;
-    }else runs.push({start:k,end:k,length:1});
+  groups.forEach(days=>{
+    let current=null;
+    days.forEach(k=>{
+      const mark=periodMark(cat,k);
+      if(!current){
+        if(mark===false)return;
+        current={start:k,end:k,length:1};
+        runs.push(current);
+        return;
+      }
+      if(mark===true){
+        current={start:k,end:k,length:1};
+        runs.push(current);
+        return;
+      }
+      current.end=k;
+      current.length+=1;
+    });
   });
   const today=key(new Date());
   runs.forEach(run=>{run.complete=run.end<today});
@@ -2699,7 +2770,7 @@ function addFlowOption(){
   pendingFlowName='';
   if(field)field.value='';
   if(!name){keepField('#newFlowOption');return}
-  cat.flowOptions.push({id:uid(),name,color:FLOW_PALETTE[cat.flowOptions.length%FLOW_PALETTE.length],shape:'dot'});
+  cat.flowOptions.push({id:uid(),name,color:FLOW_PALETTE[cat.flowOptions.length%FLOW_PALETTE.length],shape:'dot',period:false});
   save();
   render();
   keepField('#newFlowOption');
@@ -2760,6 +2831,30 @@ function setFlowShape(id,shape){
   opt.shape=shape;
   save();
   render();
+}
+function setOptionPeriod(id,on){
+  touchEntry();
+  const cat=currentCat();
+  const opt=cat&&flowOptionById(cat,id);
+  if(!opt)return;
+  opt.period=!!on;
+  save();
+  render();
+}
+function setPeriodMark(date,value){
+  touchEntry();
+  const cat=currentCat();
+  if(!cat)return;
+  if(!cat.periodMarks||typeof cat.periodMarks!=='object'||Array.isArray(cat.periodMarks))cat.periodMarks={};
+  if(value===true||value===false)cat.periodMarks[date]=value;
+  else delete cat.periodMarks[date];
+  save();
+  render();
+}
+function autoPeriodStart(cat,date){
+  const marks=Object.assign({},cat.periodMarks||{});
+  delete marks[date];
+  return periodRuns(Object.assign({},cat,{periodMarks:marks})).some(run=>run.start===date);
 }
 function setShowCycle(on){
   touchEntry();
@@ -2838,18 +2933,37 @@ function trackCalendar(cat){
       weeks),
     flow&&cat.showCycle?cycleInfo(cat,sel):null);
 }
+function periodOverrideRow(cat,date){
+  const mark=periodMark(cat,date);
+  const auto=mark===null&&autoPeriodStart(cat,date);
+  const started=mark===true||auto;
+  return h('div',{class:'period-overrides',id:'periodOverrides'},
+    h('label',{class:'period-toggle'},
+      h('input',{type:'checkbox',id:'periodStarted',checked:started,'aria-label':'Period started',onchange:ev=>{
+        if(ev.target.checked)setPeriodMark(date,true);
+        else if(mark===true)setPeriodMark(date,null);
+        else setPeriodMark(date,false);
+      }}),
+      'Period started'),
+    h('label',{class:'period-toggle'},
+      h('input',{type:'checkbox',id:'notAStart',checked:mark===false,'aria-label':'Not a start',onchange:ev=>{
+        setPeriodMark(date,ev.target.checked?false:null);
+      }}),
+      'Not a start'));
+}
 function cycleInfo(cat,date){
   const s=cycleStats(cat,date);
-  if(s.cycleDay==null&&!s.avgCycle&&s.avgPeriod==null&&!s.predict&&!s.ignored)return null;
   const bits=[];
   if(s.last)bits.push(`Last start ${shortDate(s.last)}`);
   if(s.avgCycle!=null)bits.push(`Cycle ${formatDayCount(s.avgCycle)}`);
   if(s.avgPeriod!=null)bits.push(`Logged ${formatDayCount(s.avgPeriod)}`);
+  const dayText=s.cycleDay!=null?`Cycle day ${s.cycleDay}`:'Cycle day —';
   return h('div',{class:'cycle-info',id:'cycleInfo'},
-    s.cycleDay!=null?h('p',{class:'cycle-day','data-cycle-day':String(s.cycleDay)},`Cycle day ${s.cycleDay}`):null,
+    h('p',{class:'cycle-day','data-cycle-day':s.cycleDay==null?'':String(s.cycleDay)},dayText),
     bits.length?h('p',{class:'muted sm cycle-meta'},bits.join(' · ')):null,
     s.predict?h('p',{class:'muted sm cycle-next','data-predict':s.predict},`Next start ${shortDate(s.predict)}`):null,
-    s.ignored?h('p',{class:'muted sm cycle-skip','data-skipped':String(s.ignored)},`(${s.ignored} skipped cycle${s.ignored===1?'':'s'} ignored)`):null);
+    s.ignored?h('p',{class:'muted sm cycle-skip','data-skipped':String(s.ignored)},`(${s.ignored} skipped cycle${s.ignored===1?'':'s'} ignored)`):null,
+    periodOverrideRow(cat,date));
 }
 function shiftPanel(cat){
   const list=shiftsOn(cat,sel);
@@ -2894,6 +3008,9 @@ function flowOptionRow(cat,opt,index,count){
   return h('div',{class:'flow-option','data-option':opt.id},
     name,
     !flowEdit&&logged>1?h('span',{class:'flow-count','data-count':String(logged)},`×${logged}`):null,
+    flowEdit?h('label',{class:'period-toggle'},
+      h('input',{type:'checkbox',id:'periodFlag-'+opt.id,'data-period':opt.id,checked:!!opt.period,'aria-label':`Counts as period for ${opt.name||'option'}`,onchange:ev=>setOptionPeriod(opt.id,ev.target.checked)}),
+      'Counts as period'):null,
     flowEdit?h('div',{class:'flow-palette'},
       ...FLOW_PALETTE.map(color=>h('button',{type:'button',class:'flow-swatch'+(opt.color.toLowerCase()===color.toLowerCase()?' on':''),style:'--flow:'+color,'aria-label':color,onclick:()=>setFlowColor(opt.id,color)})),
       h('input',{class:'flow-custom',type:'color','aria-label':`Custom colour for ${opt.name||'option'}`,value:opt.color,
@@ -5114,7 +5231,7 @@ function renderCats(){
       if(type==='timer'){cat.sectionNames=['Notes'];cat.sectionTags={};}
       if(type==='weather')cat.place=null;
       if(type==='list'){cat.lists=[];cat.meals={};}
-      if(type==='tracker'){cat.tracker=newTracker==='flow'?'flow':'shifts';cat.shifts={};cat.flow={};cat.flowOptions=[];cat.showCycle=false;}
+      if(type==='tracker'){cat.tracker=newTracker==='flow'?'flow':'shifts';cat.shifts={};cat.flow={};cat.flowOptions=[];cat.showCycle=false;if(cat.tracker==='flow'){cat.periodMarks={};cat.periodMarkAt={}}}
       if(type==='relationships'){cat.groups=[{id:uid(),name:'Friends'}];cat.people=[];}
       if(type==='record')cat.records=[];
       if(type==='walk'){cat.walks=[];cat.walkUnit='km';}
@@ -5563,6 +5680,11 @@ function stampMissing(s){
     if((c.tracker==='flow'||(c.flowOptions||[]).length)&&!Number.isFinite(Number(c.flowOptionOrderAt))){c.flowOptionOrderAt=numAt(c.updatedAt)||1;changed=true}
     if((c.tracker==='flow'||c.flow)&&(!c.flowOrderAt||typeof c.flowOrderAt!=='object'||Array.isArray(c.flowOrderAt))){c.flowOrderAt={};changed=true}
     if(c.tracker==='flow'&&!Number.isFinite(Number(c.showCycleAt))){c.showCycleAt=c.showCycle?1:0;changed=true}
+    if(c.tracker==='flow'){
+      if(!c.periodMarks||typeof c.periodMarks!=='object'||Array.isArray(c.periodMarks)){c.periodMarks={};changed=true}
+      if(!c.periodMarkAt||typeof c.periodMarkAt!=='object'||Array.isArray(c.periodMarkAt)){c.periodMarkAt={};changed=true}
+      Object.keys(c.periodMarks).forEach(date=>{if(!Number.isFinite(Number(c.periodMarkAt[date]))){c.periodMarkAt[date]=1;changed=true}});
+    }
     (c.lists||[]).forEach(list=>{
       if(atLeast(list,1))changed=true;
       if(!Number.isFinite(Number(list.itemOrderAt))){list.itemOrderAt=numAt(list.updatedAt)||1;changed=true}
@@ -5753,8 +5875,15 @@ function diffFlow(prev,next,ts){
   const catId=next.id;
   if(!Array.isArray(next.flowOptions))next.flowOptions=[];
   if(idOrder(prev.flowOptions)!==idOrder(next.flowOptions)){next.flowOptionOrderAt=ts;syncDirty=true}
-  diffChildren(prev.flowOptions,next.flowOptions,'flowOption',catId+'/',ts,opt=>JSON.stringify({name:opt.name,color:opt.color,shape:opt.shape}));
+  diffChildren(prev.flowOptions,next.flowOptions,'flowOption',catId+'/',ts,opt=>JSON.stringify({name:opt.name,color:opt.color,shape:opt.shape,period:!!opt.period}));
   if(!!prev.showCycle!==!!next.showCycle){next.showCycleAt=ts;syncDirty=true}
+  if(!next.periodMarkAt||typeof next.periodMarkAt!=='object'||Array.isArray(next.periodMarkAt))next.periodMarkAt={};
+  const markDates=new Set([...Object.keys(prev.periodMarks||{}),...Object.keys(next.periodMarks||{}),...Object.keys(prev.periodMarkAt||{}),...Object.keys(next.periodMarkAt||{})]);
+  markDates.forEach(date=>{
+    const before=prev.periodMarks&&(prev.periodMarks[date]===true||prev.periodMarks[date]===false)?prev.periodMarks[date]:null;
+    const after=next.periodMarks&&(next.periodMarks[date]===true||next.periodMarks[date]===false)?next.periodMarks[date]:null;
+    if(before!==after){next.periodMarkAt[date]=ts;syncDirty=true}
+  });
   if(!next.flowOrderAt||typeof next.flowOrderAt!=='object'||Array.isArray(next.flowOrderAt))next.flowOrderAt={};
   const dates=new Set([...Object.keys(prev.flow||{}),...Object.keys(next.flow||{})]);
   dates.forEach(date=>{
@@ -6025,7 +6154,20 @@ function mergeFlow(a,b,gone){
     if(arr.length)flow[date]=arr;
   });
   const showCycle=numAt(b.showCycleAt)>numAt(a.showCycleAt)?!!b.showCycle:!!a.showCycle;
-  return {flow,flowOptions,flowOptionOrderAt:Math.max(numAt(a.flowOptionOrderAt),numAt(b.flowOptionOrderAt)),flowOrderAt,showCycle,showCycleAt:Math.max(numAt(a.showCycleAt),numAt(b.showCycleAt))};
+  const periodMarks={};
+  const periodMarkAt={};
+  const markDates=new Set([...Object.keys(a.periodMarks||{}),...Object.keys(b.periodMarks||{}),...Object.keys(a.periodMarkAt||{}),...Object.keys(b.periodMarkAt||{})]);
+  markDates.forEach(date=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return;
+    const ta=numAt(a.periodMarkAt&&a.periodMarkAt[date]);
+    const tb=numAt(b.periodMarkAt&&b.periodMarkAt[date]);
+    const src=tb>ta?b:a;
+    const t=Math.max(ta,tb);
+    if(t)periodMarkAt[date]=t;
+    const value=src.periodMarks&&src.periodMarks[date];
+    if(value===true||value===false)periodMarks[date]=value;
+  });
+  return {flow,flowOptions,flowOptionOrderAt:Math.max(numAt(a.flowOptionOrderAt),numAt(b.flowOptionOrderAt)),flowOrderAt,showCycle,showCycleAt:Math.max(numAt(a.showCycleAt),numAt(b.showCycleAt)),periodMarks,periodMarkAt};
 }
 function mergeRelationships(a,b,gone){
   const catId=a.id||b.id;
@@ -6108,6 +6250,8 @@ function mergeCategory(a,b,gone){
     out.flowOrderAt=flow.flowOrderAt;
     out.showCycle=flow.showCycle;
     out.showCycleAt=flow.showCycleAt;
+    out.periodMarks=flow.periodMarks;
+    out.periodMarkAt=flow.periodMarkAt;
   }
   if(a.type==='relationships'||b.type==='relationships'||(a.groups||[]).length||(b.groups||[]).length||(a.people||[]).length||(b.people||[]).length){
     const rel=mergeRelationships(a,b,gone);
