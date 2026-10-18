@@ -134,6 +134,10 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .flow-bit{display:inline-flex;align-items:center;gap:.3rem}
 .cycle-toggle{display:flex;align-items:center;gap:.5rem;margin-top:.9rem}
 .cycle-toggle input{width:1.05rem;height:1.05rem;accent-color:var(--accent)}
+.period-toggle{display:inline-flex;align-items:center;gap:.35rem;margin:0;color:var(--muted);font-size:.8rem;line-height:1.2}
+.period-toggle input{width:.95rem;height:.95rem;margin:0;accent-color:var(--accent)}
+.flow-options.editing .period-toggle{flex:1 0 100%}
+.period-overrides{display:flex;flex-wrap:wrap;gap:.2rem 1rem;margin-top:.35rem}
 .cycle-skip{margin:.15rem 0 0}
 .track-split{display:flex;flex-direction:column;gap:.65rem}
 .track-weeks{display:flex;flex-direction:column;gap:.15rem}
