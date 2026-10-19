@@ -2510,6 +2510,10 @@ function trackerDateKeys(){
     Object.keys(shifts).forEach(k=>{if(Array.isArray(shifts[k])&&shifts[k].length)dates.push(k)});
     const flow=c.flow&&typeof c.flow==='object'?c.flow:{};
     Object.keys(flow).forEach(k=>{if(Array.isArray(flow[k])&&flow[k].length)dates.push(k)});
+    if(c.tracker==='flow'){
+      const marks=c.periodMarks&&typeof c.periodMarks==='object'?c.periodMarks:{};
+      Object.keys(marks).forEach(k=>{if((marks[k]===true||marks[k]===false)&&/^\d{4}-\d{2}-\d{2}$/.test(k))dates.push(k)});
+    }
   });
   return dates;
 }
@@ -3077,15 +3081,18 @@ function trackerHomeBits(cat){
 function trackerReview(cat,date){
   if(cat.tracker==='flow'){
     const line=flowDayLine(cat,date);
+    const mark=periodMark(cat,date);
+    if(!line&&mark===null)return null;
     const stats=cat.showCycle?cycleStats(cat,date):null;
-    if(!line&&!(stats&&stats.cycleDay!=null))return null;
+    const markText=mark===true?'Period started':mark===false?'Not a start':'';
     return h('div',{class:'day-track','data-track':date},
       line,
+      !line&&markText?h('p',{class:'muted sm period-mark-line'},markText):null,
       stats&&stats.cycleDay!=null?h('p',{class:'muted sm cycle-day','data-cycle-day':String(stats.cycleDay)},`Cycle day ${stats.cycleDay}`):null);
   }
   const shifts=shiftsOn(cat,date);
+  if(!shifts.length)return null;
   const week=weekDates(date).reduce((n,day)=>n+dayShiftMinutes(cat,day),0);
-  if(!shifts.length&&!week)return null;
   return h('div',{class:'day-track','data-track':date},
     ...shifts.map(sh=>h('div',{class:'day-shift','data-shift':sh.id},
       h('p',{class:'shift-when'},shiftWhen(sh)),
@@ -4992,7 +4999,37 @@ function daySummary(entryCount,goalCount){
   const parts=[];
   if(entryCount)parts.push(`${entryCount} entr${entryCount===1?'y':'ies'}`);
   if(goalCount)parts.push(`${goalCount} goal${goalCount===1?'':'s'}`);
-  return parts.join(' · ')||'0 entries';
+  return parts.join(' · ');
+}
+function dayTitleOf(k){
+  const name=state.dayTitles&&state.dayTitles[k];
+  return typeof name==='string'?name.trim():'';
+}
+function flowLogCount(cat,date){
+  return flowSummary(cat,date).reduce((n,g)=>n+g.count,0);
+}
+function categoryDayCount(cat,date){
+  let n=dayEntries(date,cat.id).length;
+  if(cat.type==='list')n+=mealsOn(cat,date).length;
+  if(cat.type==='tracker'){
+    if(cat.tracker==='flow'){
+      const logs=flowLogCount(cat,date);
+      n+=logs||(periodMark(cat,date)!==null?1:0);
+    }else n+=shiftsOn(cat,date).length;
+  }
+  if(cat.type==='relationships')n+=relNotesOn(cat,date).length;
+  if(cat.type==='record')n+=recordsOn(cat,date).length;
+  if(cat.type==='walk')n+=walksOn(cat,date).length;
+  return n;
+}
+function dayEntryCount(date){
+  const known=new Set((state.categories||[]).map(c=>c.id));
+  const named=(state.categories||[]).reduce((n,c)=>n+categoryDayCount(c,date),0);
+  const orphans=state.entries.filter(e=>e.date===date&&!known.has(e.categoryId)).length;
+  return named+orphans;
+}
+function dayVisible(k){
+  return !!(dayTitleOf(k)||dayEntryCount(k)||goalsOnDay(k).length);
 }
 function goalEntryPreview(e){
   const title=goalPreviewTitle(e);
@@ -5314,16 +5351,17 @@ function renderCal(){
 }
 function toggleDay(k){if(expanded.has(k))expanded.delete(k);else expanded.add(k);render()}
 function renderDays(){
-  const ks=[...new Set([...Object.keys(state.dayTitles),...state.entries.map(e=>e.date),...mealDateKeys(),...trackerDateKeys(),...relDateKeys(),...recordDateKeys(),...goalDateKeys(),...walkDateKeys()])].sort().reverse();
+  const ks=[...new Set([...Object.keys(state.dayTitles),...state.entries.map(e=>e.date),...mealDateKeys(),...trackerDateKeys(),...relDateKeys(),...recordDateKeys(),...goalDateKeys(),...walkDateKeys()])].filter(dayVisible).sort().reverse();
   $('daysEmpty').hidden=ks.length>0;
   $('daysList').replaceChildren(...ks.map(k=>{
-    const entryCount=state.entries.filter(e=>e.date===k).length+relDateKeys().filter(d=>d===k).length+recordDateKeys().filter(d=>d===k).length+walkDateKeys().filter(d=>d===k).length;
+    const entryCount=dayEntryCount(k);
     const goalCount=goalsOnDay(k).length;
     const open=expanded.has(k);
     const known=new Set(state.categories.map(c=>c.id));
-    const groups=state.categories.map(c=>({cat:c,name:c.name,entries:dayEntries(k,c.id)}));
+    const groups=state.categories.filter(c=>categoryDayCount(c,k)>0).map(c=>({cat:c,name:c.name,entries:dayEntries(k,c.id)}));
     const orphans=state.entries.filter(e=>e.date===k&&!known.has(e.categoryId));
     if(orphans.length)groups.push({name:'Other',entries:orphans.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))});
+    const summary=daySummary(entryCount,goalCount);
     const head=h('div',{class:'day-item',role:'button',tabindex:'0','aria-expanded':open?'true':'false',onclick:ev=>{
       if(ev.target.closest('button'))return;
       toggleDay(k);
@@ -5332,25 +5370,24 @@ function renderDays(){
       if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();toggleDay(k)}
     }},
       h('div',{class:'row top-row'},
-        h('div',null,state.dayTitles[k]||'New Day'),
+        h('div',null,dayTitleOf(k)||'New Day'),
         h('span',{class:'muted sm'},fmt(k))),
       h('div',{class:'row'},
-        h('div',{class:'muted sm day-summary'},daySummary(entryCount,goalCount)),
+        summary?h('div',{class:'muted sm day-summary'},summary):null,
         h('button',{type:'button',class:'open-day',onclick:ev=>{ev.stopPropagation();select(k)}},'Open day')));
-    const body=open?h('div',{class:'day-body'},
-      groups.length?groups.map(g=>{
+    const goals=goalDaySection(k);
+    const body=open&&(groups.length||goals)?h('div',{class:'day-body'},
+      ...groups.map(g=>{
         const meals=g.cat&&g.cat.type==='list'?mealReview(g.cat,k):null;
         const review=g.cat&&g.cat.type==='tracker'?trackerReview(g.cat,k):g.cat&&g.cat.type==='relationships'?relReview(g.cat,k):g.cat&&g.cat.type==='record'?recordReview(g.cat,k):g.cat&&g.cat.type==='walk'?walkReview(g.cat,k):null;
-        if(g.cat&&(g.cat.type==='record'||g.cat.type==='walk')&&!review)return null;
         const entries=g.entries.length?g.entries.map(entryCard):null;
         return h('div',{class:'day-cat','data-cat-name':g.name},
           h('h3',{class:'day-cat-name'},g.name),
           review,
           entries,
-          meals,
-          !review&&!entries&&!meals?h('p',{class:'muted nothing'},'Nothing written.'):null);
-      }):h('p',{class:'muted'},'No categories yet.'),
-      goalDaySection(k)):null;
+          meals);
+      }),
+      goals):null;
     return h('div',{class:'day-block'+(k===sel?' sel':''),'data-day':k},head,body);
   }));
 }
