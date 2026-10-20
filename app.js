@@ -712,13 +712,13 @@ const LOOKS=[
   {id:'paper',name:'Paper',note:'Warm paper and a plain edge'},
   {id:'wood',name:'Wood',note:'Grain, parchment, carved frame'},
   {id:'vine',name:'Vine',note:'Leaves and a vine frame'},
-  {id:'retro',name:'90s Retro',note:'Pixel sky and lime bevels'},
-  {id:'earth',name:'Earth',note:'Starfield and a circuit frame'},
-  {id:'water',name:'Water',note:'Watercolor and a ripple frame'}
+  {id:'retro',name:'90s Retro',note:'Pixel sky and lime bevels'}
 ];
 const LOOK_IDS=new Set(LOOKS.map(l=>l.id));
-const THEME_COLOR={paper:'#2f5d45',wood:'#7a4e2a',vine:'#1e6b38',retro:'#123d16',earth:'#07182c',water:'#1f7c84'};
-const BORDERS=['rounded','square','double','dashed','thick','wood','vine','earth','water'];
+const THEME_COLOR={paper:'#2f5d45',wood:'#7a4e2a',vine:'#1e6b38',retro:'#123d16'};
+const BORDERS=['rounded','square','double','dashed','thick','wood','vine'];
+const BORDER_SLICE=96;
+const BORDER_TILE_MAX=420;
 const FONTS=[
   {id:'',name:'Theme serif'},
   {id:'garamond',name:'EB Garamond'},
@@ -732,11 +732,9 @@ const SCENES=[
   {id:'wood',name:'Wood'},
   {id:'vine',name:'Vine'},
   {id:'retro',name:'90s Retro'},
-  {id:'earth',name:'Earth'},
-  {id:'water',name:'Water'},
   {id:'upload',name:'Uploaded image'}
 ];
-const SCENE_URL={wood:'assets/bg-wood.webp',vine:'assets/bg-vine.webp',retro:'assets/bg-retro.webp',earth:'assets/bg-earth.webp',water:'assets/bg-water.webp'};
+const SCENE_URL={wood:'assets/bg-wood.webp',vine:'assets/bg-vine.webp',retro:'assets/bg-retro.webp'};
 const WATCH_KEY='field-record-watch';
 function hexParts(hex){
   const h=String(hex||'').replace('#','');
@@ -771,8 +769,11 @@ function presetSkin(id){
 function normalizeSkin(raw){
   const base=presetSkin('paper');
   const s=Object.assign({},base,raw||{});
+  if(s.scene==='earth'||s.scene==='water')s.scene='none';
   s.scene=SCENES.some(x=>x.id===s.scene)?s.scene:'none';
-  s.border=BORDERS.includes(s.border)?s.border:'rounded';
+  if(s.border==='earth'||s.border==='water')s.border='rounded';
+  s.border=s.border==='custom'||BORDERS.includes(s.border)?s.border:'rounded';
+  s.borderId=typeof s.borderId==='string'?s.borderId:'';
   s.font=FONTS.some(f=>f.id===s.font)?s.font:'';
   s.page=hexOf(s.page,base.page);
   s.card=hexOf(s.card,base.card);
@@ -781,6 +782,60 @@ function normalizeSkin(raw){
   s.line=hexOf(s.line,base.line);
   s.uploadId=typeof s.uploadId==='string'?s.uploadId:'';
   return s;
+}
+function normalizeBorder(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+  const id=typeof raw.id==='string'?raw.id:'';
+  const sourceId=typeof raw.sourceId==='string'?raw.sourceId:'';
+  if(!id||!sourceId)return null;
+  const thickness=Math.round(Number(raw.thickness));
+  const opacity=Number(raw.opacity);
+  const slice=Math.round(Number(raw.slice));
+  return {
+    id,
+    sourceId,
+    frameId:typeof raw.frameId==='string'?raw.frameId:'',
+    thickness:Number.isFinite(thickness)?Math.min(60,Math.max(8,thickness)):24,
+    fit:raw.fit==='stretch'?'stretch':'tile',
+    orientation:raw.orientation==='tile'?'tile':'edge',
+    tint:hexParts(raw.tint)?hexOf(raw.tint,'#8a6a2f'):'',
+    opacity:Number.isFinite(opacity)?Math.min(1,Math.max(0.2,opacity)):1,
+    slice:Number.isFinite(slice)&&slice>0?slice:BORDER_SLICE,
+    updatedAt:Number.isFinite(Number(raw.updatedAt))?Number(raw.updatedAt):1
+  };
+}
+function normalizeBorders(list){
+  const seen=new Set();
+  return (Array.isArray(list)?list:[]).map(normalizeBorder).filter(b=>{
+    if(!b||seen.has(b.id))return false;
+    seen.add(b.id);
+    return true;
+  });
+}
+function releaseMissingBorder(skin,borders){
+  if(!skin||skin.border!=='custom')return skin;
+  if(!borders.some(b=>b.id===skin.borderId))skin.border='rounded';
+  return skin;
+}
+function retireLooks(s){
+  let changed=false;
+  if(s.look==='earth'||s.look==='water'){
+    const base=presetSkin(s.look);
+    const prev=s.skin&&typeof s.skin==='object'?s.skin:{};
+    s.skin=Object.assign({},base,prev,{scene:'none',border:'rounded'});
+    s.look='custom';
+    changed=true;
+  }
+  const retired=skin=>!!(skin&&(skin.scene==='earth'||skin.scene==='water'||skin.border==='earth'||skin.border==='water'));
+  if(retired(s.skin)||(s.themes||[]).some(t=>retired(t&&t.skin)))changed=true;
+  s.borders=normalizeBorders(s.borders);
+  s.themes=(Array.isArray(s.themes)?s.themes:[]).filter(t=>t&&t.id&&t.name&&t.skin).map(t=>{
+    const theme={id:String(t.id),name:String(t.name),skin:releaseMissingBorder(normalizeSkin(t.skin),s.borders)};
+    if(Number.isFinite(Number(t.updatedAt)))theme.updatedAt=Number(t.updatedAt);
+    return theme;
+  });
+  s.skin=s.skin&&typeof s.skin==='object'?releaseMissingBorder(normalizeSkin(s.skin),s.borders):null;
+  return changed;
 }
 function applyAppearance(){
   const root=document.documentElement;
@@ -819,6 +874,22 @@ function applyAppearance(){
   }else if(SCENE_URL[s.scene]){
     root.style.setProperty('--scene',`url("${SCENE_URL[s.scene]}")`);
   }else root.style.setProperty('--scene','none');
+  root.style.removeProperty('--border-frame');
+  root.style.removeProperty('--border-slice');
+  root.style.removeProperty('--border-repeat');
+  const frame=(state.borders||[]).find(b=>s.border==='custom'&&b.id===s.borderId&&b.frameId);
+  if(frame){
+    root.dataset.border='custom';
+    root.style.setProperty('--frame',frame.thickness+'px');
+    root.style.setProperty('--border-slice',String(frame.slice||BORDER_SLICE));
+    root.style.setProperty('--border-repeat',frame.fit==='stretch'?'stretch':'round');
+    const frameId=frame.frameId;
+    urlFor(frameId).then(url=>{
+      const live=state.skin&&state.skin.border==='custom'&&state.skin.borderId===frame.id;
+      const cur=live&&(state.borders||[]).find(b=>b.id===frame.id);
+      if(cur&&cur.frameId===frameId&&url)root.style.setProperty('--border-frame',`url("${url}")`);
+    }).catch(()=>{});
+  }else if(s.border==='custom')root.dataset.border='rounded';
   if(meta)meta.setAttribute('content',s.accent);
 }
 const GOAL_TYPES={checks:{id:'checks',label:'Daily check-boxes'}};
@@ -872,7 +943,7 @@ function load(){
   try{
     const s=JSON.parse(localStorage.getItem(KEY));
     if(s&&Array.isArray(s.categories)){
-      const state=Object.assign({categories:[],entries:[],dayTitles:{},goals:[],look:'paper',themes:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}},s);
+      const state=Object.assign({categories:[],entries:[],dayTitles:{},goals:[],look:'paper',themes:[],borders:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}},s);
       let migrated=false;
       state.categories.forEach(c=>{
         if(!Array.isArray(c.tags))c.tags=[];
@@ -978,8 +1049,7 @@ function load(){
       const nextGoals=(Array.isArray(state.goals)?state.goals:[]).filter(g=>g&&typeof g==='object').map(normalizeGoal);
       if(!hadGoals||JSON.stringify(state.goals)!==JSON.stringify(nextGoals))migrated=true;
       state.goals=nextGoals;
-      state.themes=(Array.isArray(state.themes)?state.themes:[]).filter(t=>t&&t.id&&t.name&&t.skin).map(t=>({id:String(t.id),name:String(t.name),skin:normalizeSkin(t.skin)}));
-      state.skin=state.skin&&typeof state.skin==='object'?normalizeSkin(state.skin):null;
+      if(retireLooks(state))migrated=true;
       const typing=state.typing&&typeof state.typing==='object'?state.typing:{};
       const vol=Number(typing.volume);
       state.typing={
@@ -1002,13 +1072,14 @@ function load(){
       return state;
     }
   }catch(e){}
-  const blank={categories:[],entries:[],dayTitles:{},goals:[],look:'paper',themes:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}};
+  const blank={categories:[],entries:[],dayTitles:{},goals:[],look:'paper',themes:[],borders:[],skin:null,typing:{enabled:false,voice:'key',volume:0.35}};
   stampMissing(blank);
   return blank;
 }
-const GONE_KINDS=['category','entry','goal','goalItem','goalEntry','goalCheck','list','listItem','meal','mealItem','shift','flowLog','flowOption','dayTitle','theme','image','group','person','relSection','relNote','record','walk'];
+const GONE_KINDS=['category','entry','goal','goalItem','goalEntry','goalCheck','list','listItem','meal','mealItem','shift','flowLog','flowOption','dayTitle','theme','border','image','group','person','relSection','relNote','record','walk'];
 let state=load();
 applyAppearance();
+ensureBorderFrames();
 let goalNotesFor=null;
 let skipFormRead=false,skipShiftRead=false;
 let syncSnap=null,syncQuiet=false,syncDirty=false,syncTimer=null,syncing=false,syncQueued=false;
@@ -1062,6 +1133,8 @@ const urlCache=new Map();
 let dbPromise=null;
 let renamingTheme=null;
 let bgError='';
+let borderError='';
+let borderTimer=null;
 function loadWatch(){
   try{
     const w=JSON.parse(localStorage.getItem(WATCH_KEY));
@@ -1231,6 +1304,108 @@ function blobFromCanvas(canvas){
       else jpeg();
     },'image/webp',0.82);
   });
+}
+function canvasOf(w,h){
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(w));
+  canvas.height=Math.max(1,Math.round(h));
+  const ctx=canvas.getContext('2d');
+  if(ctx)ctx.imageSmoothingEnabled=true;
+  return {canvas,ctx};
+}
+function rotateCanvas(src,turns){
+  const w=src.width,h=src.height,odd=turns%2===1;
+  const {canvas,ctx}=canvasOf(odd?h:w,odd?w:h);
+  ctx.translate(canvas.width/2,canvas.height/2);
+  ctx.rotate((turns%4)*Math.PI/2);
+  ctx.drawImage(src,-w/2,-h/2);
+  return canvas;
+}
+function landscapeStrip(bitmap){
+  const base=bitmap.width>=bitmap.height?bitmap:rotateCanvas(bitmap,1);
+  const dw=Math.max(BORDER_SLICE,Math.round(base.width*(BORDER_SLICE/base.height)));
+  const scaled=canvasOf(dw,BORDER_SLICE);
+  scaled.ctx.drawImage(base,0,0,dw,BORDER_SLICE);
+  if(scaled.canvas.width<=BORDER_TILE_MAX)return scaled.canvas;
+  const cut=canvasOf(BORDER_TILE_MAX,BORDER_SLICE);
+  const sx=Math.floor((scaled.canvas.width-BORDER_TILE_MAX)/2);
+  cut.ctx.drawImage(scaled.canvas,sx,0,BORDER_TILE_MAX,BORDER_SLICE,0,0,BORDER_TILE_MAX,BORDER_SLICE);
+  return cut.canvas;
+}
+function patternTile(bitmap){
+  const side=Math.min(bitmap.width,bitmap.height);
+  const sx=Math.floor((bitmap.width-side)/2),sy=Math.floor((bitmap.height-side)/2);
+  const {canvas,ctx}=canvasOf(BORDER_SLICE,BORDER_SLICE);
+  ctx.drawImage(bitmap,sx,sy,side,side,0,0,BORDER_SLICE,BORDER_SLICE);
+  return canvas;
+}
+function endSquare(strip,right){
+  const {canvas,ctx}=canvasOf(BORDER_SLICE,BORDER_SLICE);
+  const sx=right?Math.max(0,strip.width-BORDER_SLICE):0;
+  ctx.drawImage(strip,sx,0,Math.min(BORDER_SLICE,strip.width),BORDER_SLICE,0,0,BORDER_SLICE,BORDER_SLICE);
+  return canvas;
+}
+function paintBorderFrame(bitmap,border){
+  const tile=border.orientation==='tile'?patternTile(bitmap):landscapeStrip(bitmap);
+  const S=BORDER_SLICE,T=tile.width;
+  const {canvas,ctx}=canvasOf(S+T+S,S+T+S);
+  ctx.drawImage(tile,S,0,T,S);
+  ctx.drawImage(rotateCanvas(tile,1),S+T,S,S,T);
+  ctx.drawImage(rotateCanvas(tile,2),S,S+T,T,S);
+  ctx.drawImage(rotateCanvas(tile,3),0,S,S,T);
+  const tl=border.orientation==='tile'?tile:endSquare(tile,false);
+  const tr=border.orientation==='tile'?rotateCanvas(tile,1):endSquare(tile,true);
+  const br=border.orientation==='tile'?rotateCanvas(tile,2):rotateCanvas(tr,1);
+  const bl=border.orientation==='tile'?rotateCanvas(tile,3):rotateCanvas(tl,3);
+  ctx.drawImage(tl,0,0,S,S);
+  ctx.drawImage(tr,S+T,0,S,S);
+  ctx.drawImage(br,S+T,S+T,S,S);
+  ctx.drawImage(bl,0,S+T,S,S);
+  if(border.tint){
+    ctx.save();
+    ctx.globalCompositeOperation='source-atop';
+    ctx.globalAlpha=0.45;
+    ctx.fillStyle=border.tint;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.restore();
+  }
+  if(border.opacity<0.999){
+    ctx.save();
+    ctx.globalCompositeOperation='destination-in';
+    ctx.fillStyle=`rgba(0,0,0,${border.opacity})`;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.restore();
+  }
+  return canvas;
+}
+async function rebuildBorderFrame(border){
+  const src=await getImage(border.sourceId);
+  if(!src)throw new Error('source');
+  const bitmap=await createImageBitmap(src);
+  try{
+    const canvas=paintBorderFrame(bitmap,border);
+    const blob=await blobFromCanvas(canvas);
+    const next='bframe-'+uid();
+    await putImage(next,blob);
+    const prev=border.frameId;
+    border.frameId=next;
+    border.slice=BORDER_SLICE;
+    if(prev&&prev!==next)forgetImages([prev]);
+    return blob;
+  }finally{
+    if(bitmap.close)bitmap.close();
+  }
+}
+async function ensureBorderFrames(){
+  let changed=false;
+  for(const border of state.borders||[]){
+    if(border.frameId){
+      const have=await getImage(border.frameId).catch(()=>null);
+      if(have)continue;
+    }
+    try{await rebuildBorderFrame(border);changed=true}catch(e){}
+  }
+  if(changed){applyAppearance();save()}
 }
 async function compressImage(file){
   const bitmap=await createImageBitmap(file);
@@ -5470,6 +5645,7 @@ function parseBackup(text){
   if(journal.entries!=null&&!Array.isArray(journal.entries))throw new Error(BACKUP_BAD);
   if(journal.goals!=null&&!Array.isArray(journal.goals))throw new Error(BACKUP_BAD);
   if(journal.themes!=null&&!Array.isArray(journal.themes))throw new Error(BACKUP_BAD);
+  if(journal.borders!=null&&!Array.isArray(journal.borders))throw new Error(BACKUP_BAD);
   if(journal.dayTitles!=null&&(typeof journal.dayTitles!=='object'||Array.isArray(journal.dayTitles)))throw new Error(BACKUP_BAD);
   if(!Array.isArray(raw.images))throw new Error(BACKUP_BAD);
   const seen=new Set();
@@ -5621,6 +5797,7 @@ async function confirmImport(){
   syncSnap=JSON.parse(JSON.stringify(state));
   if(migrated)save();
   applyAppearance();
+  ensureBorderFrames();
   scheduleSync();
   clearImportPrompt();
   backupBusy=false;
@@ -5770,6 +5947,7 @@ function stampMissing(s){
     });
   });
   (s.themes||[]).forEach(t=>{if(atLeast(t,1))changed=true});
+  (s.borders||[]).forEach(b=>{if(atLeast(b,1))changed=true});
   if(!s.dayTitleAt||typeof s.dayTitleAt!=='object'||Array.isArray(s.dayTitleAt)){s.dayTitleAt={};changed=true}
   Object.keys(s.dayTitles||{}).forEach(d=>{if(!Number.isFinite(Number(s.dayTitleAt[d]))){s.dayTitleAt[d]=1;changed=true}});
   if(!Number.isFinite(Number(s.appearanceAt))){s.appearanceAt=1;changed=true}
@@ -5791,6 +5969,7 @@ function collectImageIds(s){
   });
   if(s.skin&&s.skin.uploadId)add(s.skin.uploadId);
   (s.themes||[]).forEach(t=>{if(t.skin&&t.skin.uploadId)add(t.skin.uploadId)});
+  (s.borders||[]).forEach(b=>{add(b.sourceId);add(b.frameId)});
   return ids;
 }
 function diffChildren(prevList,nextList,kind,prefix,ts,sig){
@@ -6049,6 +6228,7 @@ function noteEdits(){
   diffChildren(prev.entries,state.entries,'entry','',ts,e=>JSON.stringify({categoryId:e.categoryId,date:e.date,title:e.title,note:e.note,tags:e.tags,images:e.images,sections:e.sections,timerStart:e.timerStart,timerEnd:e.timerEnd,durationMinutes:e.durationMinutes,condition:e.condition,temperature:e.temperature,dreams:e.dreams}));
   diffGoals(prev,state,ts);
   diffChildren(prev.themes,state.themes,'theme','',ts,t=>JSON.stringify({name:t.name,skin:t.skin}));
+  diffChildren(prev.borders,state.borders,'border','',ts,b=>JSON.stringify({sourceId:b.sourceId,frameId:b.frameId,thickness:b.thickness,fit:b.fit,orientation:b.orientation,tint:b.tint||'',opacity:b.opacity,slice:b.slice}));
   if(!state.dayTitleAt||typeof state.dayTitleAt!=='object')state.dayTitleAt={};
   const prevTitles=prev.dayTitles||{}, nextTitles=state.dayTitles||{};
   Object.keys(prevTitles).forEach(d=>{if(!(d in nextTitles))bury('dayTitle',d,ts)});
@@ -6433,6 +6613,7 @@ function mergeJournal(local,remote){
     entries:mergeItems(local.entries,remote.entries,'entry','',gone),
     goals:mergeGoals(local.goals,remote.goals,gone),
     themes:mergeItems(local.themes,remote.themes,'theme','',gone),
+    borders:mergeItems(local.borders,remote.borders,'border','',gone),
     look:local.look,
     skin:local.skin?JSON.parse(JSON.stringify(local.skin)):null,
     appearanceAt:numAt(local.appearanceAt),
@@ -6446,11 +6627,12 @@ function mergeJournal(local,remote){
   const titles=mergeDayTitles(local,remote,gone);
   out.dayTitles=titles.dayTitles;
   out.dayTitleAt=titles.dayTitleAt;
+  retireLooks(out);
   return out;
 }
 function journalHasContent(s){
   if(!s)return false;
-  if((s.categories||[]).length||(s.entries||[]).length||(s.goals||[]).length||(s.themes||[]).length)return true;
+  if((s.categories||[]).length||(s.entries||[]).length||(s.goals||[]).length||(s.themes||[]).length||(s.borders||[]).length)return true;
   if(s.skin)return true;
   return !!(s.dayTitles&&Object.keys(s.dayTitles).length);
 }
@@ -6478,6 +6660,7 @@ function applyMerged(merged){
   if(openPerson&&!currentPerson())openPerson=null;
   if(openGoal&&!goalById(openGoal))openGoal=null;
   applyAppearance();
+  ensureBorderFrames();
   localStorage.setItem(KEY,JSON.stringify(state));
   syncSnap=JSON.parse(JSON.stringify(state));
   syncQuiet=false;
@@ -7275,6 +7458,149 @@ function playTyping(force){
   envGain(ctx,o,vol*0.06,0.012);
   o.start(t);o.stop(t+0.015);
 }
+function borderById(id){return (state.borders||[]).find(b=>b.id===id)}
+function chooseBorder(id){
+  if(!borderById(id))return;
+  beginCustom();
+  state.skin.border='custom';
+  state.skin.borderId=id;
+  paintSkin();
+  renderLook();
+}
+function deleteBorder(id){
+  const b=borderById(id);
+  state.borders=(state.borders||[]).filter(x=>x.id!==id);
+  const clear=skin=>{if(skin&&skin.border==='custom'&&skin.borderId===id){skin.border='rounded';skin.borderId=''}};
+  clear(state.skin);
+  (state.themes||[]).forEach(t=>clear(t.skin));
+  if(b)forgetImages([b.sourceId,b.frameId].filter(Boolean));
+  if(state.skin)state.skin=normalizeSkin(state.skin);
+  applyAppearance();
+  save();
+  renderLook();
+}
+async function rebuildBorderNow(id,prev){
+  const b=borderById(id);
+  if(!b)return;
+  try{
+    await rebuildBorderFrame(b);
+    borderError='';
+    paintSkin();
+    const img=document.querySelector('.border-thumb[data-border="'+id+'"] img');
+    if(img){
+      img.setAttribute('data-src-id',b.frameId);
+      const url=await urlFor(b.frameId);
+      if(url&&img.isConnected)img.src=url;
+    }
+  }catch(e){
+    if(prev){
+      b.orientation=prev.orientation;
+      b.tint=prev.tint;
+      b.opacity=prev.opacity;
+      b.frameId=prev.frameId;
+      b.slice=prev.slice;
+    }
+    borderError="Couldn't rebuild that border.";
+    renderLook();
+  }
+}
+function patchBorder(id,partial,rebuild){
+  const b=borderById(id);
+  if(!b)return;
+  const prev={orientation:b.orientation,tint:b.tint,opacity:b.opacity,frameId:b.frameId,slice:b.slice};
+  Object.assign(b,partial);
+  const n=normalizeBorder(b);
+  if(n)Object.assign(b,n);
+  beginCustom();
+  state.skin.border='custom';
+  state.skin.borderId=id;
+  if(!rebuild){paintSkin();return}
+  clearTimeout(borderTimer);
+  borderTimer=setTimeout(()=>rebuildBorderNow(id,prev),180);
+}
+function markPressed(attr,value){
+  document.querySelectorAll('['+attr+']').forEach(btn=>{
+    const on=btn.getAttribute(attr)===value;
+    btn.classList.toggle('on',on);
+    btn.setAttribute('aria-pressed',on?'true':'false');
+  });
+}
+async function onBorderUpload(ev){
+  const input=ev.target;
+  const file=input.files&&input.files[0];
+  input.value='';
+  if(!file)return;
+  const sourceId='bsrc-'+uid();
+  try{
+    const blob=await compressImage(file);
+    await putImage(sourceId,blob);
+    const border=normalizeBorder({id:uid(),sourceId,frameId:'',thickness:24,fit:'tile',orientation:'edge',tint:'',opacity:1,slice:BORDER_SLICE,updatedAt:Date.now()});
+    await rebuildBorderFrame(border);
+    state.borders=state.borders||[];
+    state.borders.push(border);
+    beginCustom();
+    state.skin.border='custom';
+    state.skin.borderId=border.id;
+    borderError='';
+    paintSkin();
+    renderLook();
+  }catch(err){
+    forgetImages([sourceId]);
+    borderError="Couldn't use that image. Try a smaller one.";
+    renderLook();
+  }
+}
+function borderTools(s){
+  const borders=state.borders||[];
+  const selected=s.border==='custom'?borderById(s.borderId):null;
+  const file=h('input',{id:'borderUpload',class:'file-input',type:'file',accept:'image/*','aria-label':'Upload border image'});
+  file.addEventListener('change',onBorderUpload);
+  const thumbs=borders.map(b=>{
+    const on=!!(selected&&selected.id===b.id);
+    return h('div',{class:'border-thumb'+(on?' on':''),'data-border':b.id},
+      h('button',{type:'button',class:'border-pick','aria-pressed':on?'true':'false','aria-label':'Use this border',onclick:()=>chooseBorder(b.id)},
+        h('img',{alt:'','data-src-id':b.frameId||b.sourceId})),
+      h('button',{type:'button',class:'thumb-x','aria-label':'Delete border',onclick:ev=>{ev.stopPropagation();deleteBorder(b.id)}},'×'));
+  });
+  const controls=selected?h('div',{class:'border-controls',id:'borderControls'},
+    h('label',{class:'lbl'},'Thickness ',h('span',{class:'muted sm',id:'borderThickLabel'},selected.thickness+'px'),
+      h('input',{id:'borderThickness',class:'volume',type:'range',min:'8',max:'60',step:'1',value:String(selected.thickness),oninput:ev=>{
+        const n=Number(ev.target.value);
+        const lab=$('borderThickLabel');
+        if(lab)lab.textContent=n+'px';
+        patchBorder(selected.id,{thickness:n},false);
+      }})),
+    h('div',{class:'type-row',id:'borderFit'},
+      h('button',{type:'button',class:'type-opt'+(selected.fit!=='stretch'?' on':''),'data-fit':'tile','aria-pressed':selected.fit!=='stretch'?'true':'false',onclick:()=>{patchBorder(selected.id,{fit:'tile'},false);markPressed('data-fit','tile')}},'Tile'),
+      h('button',{type:'button',class:'type-opt'+(selected.fit==='stretch'?' on':''),'data-fit':'stretch','aria-pressed':selected.fit==='stretch'?'true':'false',onclick:()=>{patchBorder(selected.id,{fit:'stretch'},false);markPressed('data-fit','stretch')}},'Stretch')),
+    h('p',{class:'lbl'},'Orientation'),
+    h('div',{class:'type-row',id:'borderOrient'},
+      h('button',{type:'button',class:'type-opt'+(selected.orientation!=='tile'?' on':''),'data-orient':'edge','aria-pressed':selected.orientation!=='tile'?'true':'false',onclick:()=>{patchBorder(selected.id,{orientation:'edge'},true);markPressed('data-orient','edge')}},'Runs along the edge'),
+      h('button',{type:'button',class:'type-opt'+(selected.orientation==='tile'?' on':''),'data-orient':'tile','aria-pressed':selected.orientation==='tile'?'true':'false',onclick:()=>{patchBorder(selected.id,{orientation:'tile'},true);markPressed('data-orient','tile')}},'Image is a tile')),
+    h('label',{class:'lbl'},'Opacity',
+      h('input',{id:'borderOpacity',class:'volume',type:'range',min:'0.2',max:'1',step:'0.05',value:String(selected.opacity),oninput:ev=>patchBorder(selected.id,{opacity:Number(ev.target.value)},true)})),
+    h('div',{class:'color-lab'},
+      h('label',null,'Tint ',h('input',{id:'borderTintOn',type:'checkbox',checked:!!selected.tint,onchange:ev=>{
+        const color=$('borderTint');
+        if(color)color.disabled=!ev.target.checked;
+        patchBorder(selected.id,{tint:ev.target.checked?(color&&color.value||'#8a6a2f'):''},true);
+      }})),
+      h('input',{id:'borderTint',type:'color',value:selected.tint||'#8a6a2f',disabled:!selected.tint,oninput:ev=>{
+        if(!$('borderTintOn')||!$('borderTintOn').checked)return;
+        patchBorder(selected.id,{tint:ev.target.value},true);
+      }}))
+  ):null;
+  return h('div',{class:'border-tools',id:'borderTools'},
+    h('div',{class:'actions'},
+      h('button',{type:'button',class:'btn ghost',id:'uploadBorder',onclick:()=>file.click()},'Upload border image'),
+      file),
+    borderError?h('p',{class:'warn',id:'borderError',role:'alert'},borderError):null,
+    thumbs.length?h('div',{class:'border-thumbs',id:'borderThumbs'},...thumbs):null,
+    controls,
+    h('div',{class:'card border-preview',id:'borderPreview'},
+      h('p',{class:'eyebrow'},'Preview'),
+      h('p',null,'Cards use this frame at any size.')));
+}
 function savedRow(t){
   const on=state.look==='theme:'+t.id;
   if(renamingTheme===t.id){
@@ -7300,7 +7626,7 @@ function savedRow(t){
 function customizeForm(){
   const s=currentSkin();
   const select=(id,label,options,key)=>{
-    const el=h('label',{class:'lbl'},label,h('select',{id,class:'field',onchange:ev=>setSkin(key,ev.target.value)},
+    const el=h('label',{class:'lbl'},label,h('select',{id,class:'field',onchange:ev=>{setSkin(key,ev.target.value);if(key==='border')renderLook()}},
       ...options.map(o=>h('option',{value:o.id,selected:s[key]===o.id},o.name))));
     return el;
   };
@@ -7317,7 +7643,8 @@ function customizeForm(){
       h('button',{type:'button',class:'btn ghost',id:'uploadBg',onclick:()=>file.click()},'Upload background'),
       file),
     bgError?h('p',{class:'warn',id:'bgError',role:'alert'},bgError):null,
-    select('borderPick','Border',BORDERS.map(id=>({id,name:{rounded:'Rounded',square:'Square',double:'Double line',dashed:'Dashed',thick:'Thick / shadowed',wood:'Wood frame',vine:'Vine frame',earth:'Earth frame',water:'Water frame'}[id]})),'border'),
+    select('borderPick','Border',[...(s.border==='custom'?[{id:'custom',name:'Custom image'}]:[]),...BORDERS.map(id=>({id,name:{rounded:'Rounded',square:'Square',double:'Double line',dashed:'Dashed',thick:'Thick / shadowed',wood:'Wood frame',vine:'Vine frame'}[id]}))],'border'),
+    borderTools(s),
     h('div',{class:'color-grid'},
       color('pageColor','Page', 'page'),
       color('cardColor','Card', 'card'),
@@ -7358,13 +7685,14 @@ function renderLook(){
   const saved=state.themes.map(savedRow);
   $('lookList').replaceChildren(...presets,saved.length?h('div',{class:'saved-list'},...saved):null);
   const host=$('lookCustom');
-  if(host)host.replaceChildren(customizeForm());
+  if(host){host.replaceChildren(customizeForm());hydrateImages(host)}
 }
 function openLook(){
   if(backupOpen)closeBackup();
   closeCode();
   lookOpen=true;
   bgError='';
+  borderError='';
   renderLook();
   const b=$('lookClose');
   if(b)b.focus();
