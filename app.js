@@ -718,7 +718,7 @@ const LOOK_IDS=new Set(LOOKS.map(l=>l.id));
 const THEME_COLOR={paper:'#2f5d45',wood:'#7a4e2a',vine:'#1e6b38',retro:'#123d16'};
 const BORDERS=['rounded','square','double','dashed','thick','wood','vine'];
 const BORDER_SLICE=96;
-const BORDER_TILE_MAX=420;
+const BORDER_TILE_MAX=1200;
 const FONTS=[
   {id:'',name:'Theme serif'},
   {id:'garamond',name:'EB Garamond'},
@@ -1077,6 +1077,7 @@ function load(){
   return blank;
 }
 const GONE_KINDS=['category','entry','goal','goalItem','goalEntry','goalCheck','list','listItem','meal','mealItem','shift','flowLog','flowOption','dayTitle','theme','border','image','group','person','relSection','relNote','record','walk'];
+let dbPromise=null;
 let state=load();
 applyAppearance();
 ensureBorderFrames();
@@ -1130,7 +1131,6 @@ const expanded=new Set();
 let picker=false,pickerYear=view.getFullYear(),lookOpen=false,backupOpen=false;
 let pendingImport=null,backupBusy=false;
 const urlCache=new Map();
-let dbPromise=null;
 let renamingTheme=null;
 let bgError='';
 let borderError='';
@@ -1324,13 +1324,10 @@ function rotateCanvas(src,turns){
 function landscapeStrip(bitmap){
   const base=bitmap.width>=bitmap.height?bitmap:rotateCanvas(bitmap,1);
   const dw=Math.max(BORDER_SLICE,Math.round(base.width*(BORDER_SLICE/base.height)));
-  const scaled=canvasOf(dw,BORDER_SLICE);
-  scaled.ctx.drawImage(base,0,0,dw,BORDER_SLICE);
-  if(scaled.canvas.width<=BORDER_TILE_MAX)return scaled.canvas;
-  const cut=canvasOf(BORDER_TILE_MAX,BORDER_SLICE);
-  const sx=Math.floor((scaled.canvas.width-BORDER_TILE_MAX)/2);
-  cut.ctx.drawImage(scaled.canvas,sx,0,BORDER_TILE_MAX,BORDER_SLICE,0,0,BORDER_TILE_MAX,BORDER_SLICE);
-  return cut.canvas;
+  const width=Math.min(dw,BORDER_TILE_MAX);
+  const scaled=canvasOf(width,BORDER_SLICE);
+  scaled.ctx.drawImage(base,0,0,width,BORDER_SLICE);
+  return scaled.canvas;
 }
 function patternTile(bitmap){
   const side=Math.min(bitmap.width,bitmap.height);
@@ -1347,12 +1344,15 @@ function endSquare(strip,right){
 }
 function paintBorderFrame(bitmap,border){
   const tile=border.orientation==='tile'?patternTile(bitmap):landscapeStrip(bitmap);
-  const S=BORDER_SLICE,T=tile.width;
+  const S=BORDER_SLICE;
+  const edge=border.orientation!=='tile'&&tile.width>S*2;
+  const mid=edge?(()=>{const part=canvasOf(tile.width-S*2,S);part.ctx.drawImage(tile,S,0,tile.width-S*2,S,0,0,tile.width-S*2,S);return part.canvas})():tile;
+  const T=mid.width;
   const {canvas,ctx}=canvasOf(S+T+S,S+T+S);
-  ctx.drawImage(tile,S,0,T,S);
-  ctx.drawImage(rotateCanvas(tile,1),S+T,S,S,T);
-  ctx.drawImage(rotateCanvas(tile,2),S,S+T,T,S);
-  ctx.drawImage(rotateCanvas(tile,3),0,S,S,T);
+  ctx.drawImage(mid,S,0,T,S);
+  ctx.drawImage(rotateCanvas(mid,1),S+T,S,S,T);
+  ctx.drawImage(rotateCanvas(mid,2),S,S+T,T,S);
+  ctx.drawImage(rotateCanvas(mid,3),0,S,S,T);
   const tl=border.orientation==='tile'?tile:endSquare(tile,false);
   const tr=border.orientation==='tile'?rotateCanvas(tile,1):endSquare(tile,true);
   const br=border.orientation==='tile'?rotateCanvas(tile,2):rotateCanvas(tr,1);
