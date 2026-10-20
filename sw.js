@@ -1,9 +1,9 @@
-const CACHE='field-record-v24';
+const CACHE='field-record-v25';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=24',
-  './app.js?v=24',
+  './styles.css?v=25',
+  './app.js?v=25',
   './vendor/leaflet/leaflet.css?v=22',
   './vendor/leaflet/leaflet.js?v=22',
   './vendor/leaflet/images/marker-icon.png',
@@ -16,12 +16,8 @@ const SHELL=[
   './assets/bg-wood.webp',
   './assets/bg-vine.webp',
   './assets/bg-retro.webp',
-  './assets/bg-earth.webp',
-  './assets/bg-water.webp',
   './assets/border-wood.webp',
-  './assets/border-vine.svg',
-  './assets/border-scifi.webp',
-  './assets/border-water.svg'
+  './assets/border-vine.svg'
 ];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)));
