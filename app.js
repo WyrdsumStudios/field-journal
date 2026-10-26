@@ -726,6 +726,41 @@ const TYPES={
     cardBits(e){
       return [shownNote(e.note),tagLine(e.tags),imageGrid(e.images)];
     }
+  },
+  sky:{
+    id:'sky',
+    label:'Sky',
+    tagLabel:'Tags you are watching',
+    blank(cat){return {title:'',note:'',tags:[],images:[],sky:blankSky(cat,sel)}},
+    fromEntry(e){
+      const sky=normalizeSky(e.sky)||blankSky(catById(e.categoryId),e.date);
+      return {title:e.title||'',note:e.note||'',tags:[...(e.tags||[])],images:[...(e.images||[])],sky};
+    },
+    hasContent(d){return !!(d.sky&&Number.isFinite(Number(d.sky.lat))&&Number.isFinite(Number(d.sky.lng)))},
+    write(entry,d){
+      entry.title=(d.title||'').trim();
+      entry.note=noteKeep(d.note);
+      entry.tags=[...d.tags];
+      entry.images=[...(d.images||[])];
+      const sky=normalizeSky(d.sky);
+      entry.sky=sky;
+      const cat=catById(entry.categoryId)||currentCat();
+      if(cat&&sky){
+        cat.skyLast={name:sky.name,lat:sky.lat,lng:sky.lng};
+        cat.skyLastAt=Date.now();
+      }
+    },
+    fields(d){
+      return [
+        h('label',{class:'lbl'},'Title',h('input',{id:'entryTitle',class:'field',value:d.title,autocomplete:'off'})),
+        h('label',{class:'lbl'},'Note',noteBox({id:'entryNote','aria-label':'Note'}))
+      ];
+    },
+    tail(){return null},
+    cardBits(e){
+      const cat=catById(e.categoryId);
+      return [...skyReadout(e,cat,!printing||bookOpen),shownNote(e.note),tagLine(e.tags),imageGrid(e.images)];
+    }
   }
 };
 function typeOf(cat){
@@ -1050,6 +1085,16 @@ function load(){
           c.walks=nextWalks;
           if(c.walkUnit!=='mi'){if(c.walkUnit!=='km'){c.walkUnit='km';migrated=true}}
         }
+        if(c.type==='sky'){
+          if(!Array.isArray(c.skyPlaces)){c.skyPlaces=[];migrated=true}
+          else c.skyPlaces=c.skyPlaces.filter(p=>p&&p.id&&Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lng))).map(p=>({id:String(p.id),name:typeof p.name==='string'?p.name.slice(0,180):'',lat:Number(p.lat),lng:Number(p.lng),updatedAt:Number(p.updatedAt)||0}));
+          if(!c.skyHighlight){c.skyHighlight='Tau';migrated=true}
+          if(!c.skyPlanet){c.skyPlanet='Venus';migrated=true}
+          if(!Number.isFinite(Number(c.skyWindow))){c.skyWindow=60;migrated=true}
+          const last=normalizeSky(c.skyLast,false);
+          if(c.skyLast&&!last){c.skyLast=null;migrated=true}
+          else if(last&&JSON.stringify(c.skyLast)!==JSON.stringify(last)){c.skyLast=last;migrated=true}
+        }
         if(c.type==='weather'){
           if(c.place==null){
             if(!Object.prototype.hasOwnProperty.call(c,'place')){c.place=null;migrated=true}
@@ -1093,6 +1138,10 @@ function load(){
       });
       state.entries.forEach(e=>{
         const cat=state.categories.find(c=>c.id===e.categoryId);
+        if(cat&&cat.type==='sky'){
+          const next=normalizeSky(e.sky);
+          if(JSON.stringify(e.sky||null)!==JSON.stringify(next)){e.sky=next;migrated=true}
+        }
         if(!cat||cat.type!=='weather')return;
         const cond=conditionById(e.condition)?e.condition:'';
         if(e.condition!==cond){e.condition=cond;migrated=true}
@@ -2167,6 +2216,7 @@ function readDraft(){
   }else if(hs&&ms)draft.durationMinutes=null;
   const n=$('newTag');
   if(n)pendingTag=n.value;
+  readSkyFields();
   const temp=$('wxTemp');
   if(temp){
     const raw=String(temp.value||'').trim();
@@ -2229,6 +2279,10 @@ function select(k){
     const d=parse(k);
     const v=catView instanceof Date&&!Number.isNaN(+catView)?catView:null;
     if(!v||d.getFullYear()!==v.getFullYear()||d.getMonth()!==v.getMonth())catView=new Date(d.getFullYear(),d.getMonth(),1);
+    if(openCat&&!editingId&&draft.sky){
+      const cat=catById(openCat);
+      if(cat&&cat.type==='sky')draft.sky.time=skyDefaultTime(sel);
+    }
   }
   render();
 }
@@ -2375,7 +2429,9 @@ function bookDelete(e){
 }
 function bookEditor(e){
   const kind=typeOf(catById(e.categoryId)).id;
-  const fields=[h('label',{class:'lbl'},'Title',h('input',{class:'field','data-book-title':'1',value:e.title||'','aria-label':'Title',autocomplete:'off',onblur:()=>saveBookEntry(e.id)}))];
+  const fields=[];
+  if(kind==='sky')fields.push(...skyReadout(e,catById(e.categoryId),true));
+  fields.push(h('label',{class:'lbl'},'Title',h('input',{class:'field','data-book-title':'1',value:e.title||'','aria-label':'Title',autocomplete:'off',onblur:()=>saveBookEntry(e.id)})));
   if(kind==='timer'){
     const sections=Array.isArray(e.sections)&&e.sections.length?e.sections:[{id:'notes',name:'Notes',text:e.note||''}];
     sections.forEach(s=>{
@@ -2384,6 +2440,7 @@ function bookEditor(e){
   }else{
     fields.push(noteLabel('Note',noteBox({value:e.note||'','aria-label':'Note',onblur:()=>saveBookEntry(e.id)})));
   }
+  if(kind==='sky')fields.push(skyInlineTags(e));
   return h('article',{class:'entry-card book-editing','data-entry':e.id},
     ...fields,
     h('div',{class:'entry-actions'},
@@ -2560,8 +2617,8 @@ function entryCard(e,mode){
   const inlineHere=bookEditId===e.id&&((book&&bookOpen)||(home&&!bookOpen));
   if(inlineHere)return bookEditor(e);
   const attrs={class:'entry-card'+(editing?' editing':'')+(home||browse?' quiet':''),'data-entry':e.id};
-  if(!home&&!browse&&!print&&!book)attrs.onclick=ev=>{
-    if(ev.target.closest('button,a,input,textarea,.field'))return;
+    if(!home&&!browse&&!print&&!book)attrs.onclick=ev=>{
+    if(ev.target.closest('button,a,input,textarea,.field,.sky-chart'))return;
     editEntry(e);
   };
   const actions=print?null:h('div',{class:'entry-actions'},
@@ -5747,15 +5804,337 @@ function renderRecords(cat){
     focusTitle=false;
   }
 }
+let skyQuery='',skyHits=[],skySearchStatus='',skySearchTimer=null,skySearchSeq=0;
+function skyDefaultTime(dateKey){
+  if(dateKey===key(new Date())){
+    const n=new Date();
+    return pad(n.getHours())+':'+pad(n.getMinutes());
+  }
+  return '22:00';
+}
+function blankSky(cat,dateKey){
+  const last=cat&&cat.skyLast;
+  const lat=last&&Number.isFinite(Number(last.lat))?Number(last.lat):null;
+  const lng=last&&Number.isFinite(Number(last.lng))?Number(last.lng):null;
+  return {lat,lng,name:last&&typeof last.name==='string'?last.name:'',time:skyDefaultTime(dateKey||sel)};
+}
+function normalizeSky(raw,withTime){
+  if(!raw||typeof raw!=='object')return null;
+  const lat=Number(raw.lat),lng=Number(raw.lng);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180)return null;
+  const name=typeof raw.name==='string'?raw.name.slice(0,180):'';
+  const out={lat,lng,name};
+  if(withTime!==false)out.time=/^\d{2}:\d{2}$/.test(raw.time)?raw.time:'22:00';
+  return out;
+}
+function ensureSkyCat(cat){
+  if(!cat||cat.type!=='sky')return;
+  if(!Array.isArray(cat.skyPlaces))cat.skyPlaces=[];
+  if(!cat.skyHighlight)cat.skyHighlight='Tau';
+  if(!cat.skyPlanet)cat.skyPlanet='Venus';
+  const w=Number(cat.skyWindow);
+  if(!Number.isFinite(w)||w<20||w>180)cat.skyWindow=60;
+}
+function skyWhen(dateKey,sky){
+  if(!sky||!window.Sky)return null;
+  return Sky.localWhen(dateKey,sky.time);
+}
+function skyOpts(e,cat){
+  ensureSkyCat(cat);
+  const sky=e&&e.sky||{};
+  return {
+    lat:Number(sky.lat),
+    lng:Number(sky.lng),
+    date:skyWhen(e&&e.date,sky),
+    highlight:cat&&cat.skyHighlight||'Tau',
+    planet:cat&&cat.skyPlanet||'Venus',
+    windowDays:cat&&cat.skyWindow||60,
+    names:!!(cat&&cat.skyNames)
+  };
+}
+function skyCanvas(kind,e,cat,interactive){
+  const wrap=h('div',{class:'sky-chart sky-'+kind});
+  const canvas=document.createElement('canvas');
+  canvas.className='sky-canvas';
+  canvas.setAttribute('aria-label',kind==='path'?'Planet path':'Star chart');
+  const tip=h('p',{class:'sky-tip',hidden:true});
+  wrap.append(canvas,tip);
+  const opts=skyOpts(e,cat);
+  if(window.Sky){
+    if(kind==='path')Sky.drawPath(canvas,opts);
+    else Sky.drawAllSky(canvas,opts);
+  }
+  if(interactive&&window.Sky){
+    canvas.addEventListener('click',ev=>{
+      ev.stopPropagation();
+      const hit=Sky.pick(canvas,ev);
+      if(!hit){tip.hidden=true;return}
+      tip.hidden=false;
+      tip.textContent=hit.name;
+      const rect=canvas.getBoundingClientRect();
+      const box=canvas._skyBox||{w:1,h:1};
+      tip.style.left=Math.max(4,Math.min(rect.width-8,(hit.x/box.w)*rect.width))+'px';
+      tip.style.top=Math.max(4,(hit.y/box.h)*rect.height-28)+'px';
+    });
+  }
+  return wrap;
+}
+function skyReadout(e,cat,interactive,live){
+  const sky=e&&e.sky;
+  const located=!!(sky&&Number.isFinite(Number(sky.lat))&&Number.isFinite(Number(sky.lng)));
+  const place=located?((sky.name||'').trim()||(Number(sky.lat).toFixed(2)+', '+Number(sky.lng).toFixed(2))):'';
+  const when=located?skyWhen(e.date,sky):null;
+  const status=window.Sky&&when?Sky.status(cat&&cat.skyPlanet||'Venus',when):'';
+  const up=window.Sky&&when?Sky.whatsUp(Number(sky.lat),Number(sky.lng),when):'';
+  return [
+    located?h('p',{class:'muted sm sky-caption',id:live?'skyCaption':false},place+' · '+sky.time):h('p',{class:'muted sm'},'Add a place, or a latitude and longitude.'),
+    skyCanvas('all',e,cat,interactive),
+    (located||live)?h('p',{class:'sky-status',id:live?'skyStatus':false,hidden:!status},status):null,
+    (located||live)?h('p',{class:'muted sm sky-up',id:live?'skyUp':false,hidden:!up},up):null,
+    skyCanvas('path',e,cat,interactive)
+  ];
+}
+function readSkyFields(){
+  if(!$('skyLat'))return;
+  if(!draft.sky)draft.sky=blankSky(currentCat(),sel);
+  const lat=String($('skyLat').value||'').trim();
+  const lng=String($('skyLng').value||'').trim();
+  const latN=Number(lat),lngN=Number(lng);
+  draft.sky.lat=lat===''||!Number.isFinite(latN)?null:latN;
+  draft.sky.lng=lng===''||!Number.isFinite(lngN)?null:lngN;
+  const name=$('skyName');
+  if(name)draft.sky.name=name.value;
+  const clock=$('skyTime');
+  if(clock&&clock.value)draft.sky.time=clock.value;
+}
+function repaintSkyLive(){
+  const cat=currentCat();
+  if(!cat||!window.Sky||!draft.sky)return;
+  const fake={date:sel,sky:draft.sky};
+  const opts=skyOpts(fake,cat);
+  document.querySelectorAll('#skyPanel .sky-chart').forEach(wrap=>{
+    const canvas=wrap.querySelector('canvas');
+    if(!canvas)return;
+    if(wrap.classList.contains('sky-path'))Sky.drawPath(canvas,opts);
+    else Sky.drawAllSky(canvas,opts);
+  });
+  const when=skyWhen(sel,draft.sky);
+  const ready=!!(when&&Number.isFinite(draft.sky.lat)&&Number.isFinite(draft.sky.lng));
+  const status=$('skyStatus');
+  if(status){
+    status.textContent=ready?Sky.status(cat.skyPlanet||'Venus',when):'';
+    status.hidden=!status.textContent;
+  }
+  const up=$('skyUp');
+  if(up){
+    up.textContent=ready?Sky.whatsUp(draft.sky.lat,draft.sky.lng,when):'';
+    up.hidden=!up.textContent;
+  }
+  const cap=$('skyCaption');
+  if(cap&&ready){
+    const place=(draft.sky.name||'').trim()||(Number(draft.sky.lat).toFixed(2)+', '+Number(draft.sky.lng).toFixed(2));
+    cap.textContent=place+' · '+draft.sky.time;
+  }
+}
+function onSkyTime(ev){
+  readSkyFields();
+  if(!draft.sky)return;
+  if(ev.target.id==='skyTimeRange'){
+    draft.sky.time=Sky.fromMinutes(ev.target.value);
+    const clock=$('skyTime');
+    if(clock)clock.value=draft.sky.time;
+  }else if(ev.target.value){
+    draft.sky.time=ev.target.value;
+    const range=$('skyTimeRange');
+    if(range)range.value=String(Sky.minutes(draft.sky.time));
+  }
+  repaintSkyLive();
+}
+function onSkyCoord(){
+  readSkyFields();
+  repaintSkyLive();
+}
+function paintSkySearch(){
+  const box=$('skyHits');
+  const status=$('skySearchStatus');
+  const text=skySearchStatus==='searching'?'Searching…':skySearchStatus==='none'?'No matching place.':skySearchStatus==='offline'||skySearchStatus==='error'?'Place search is unavailable right now.':skySearchStatus==='denied'?'Location is unavailable. Search for a place or enter latitude and longitude.':'';
+  if(status){status.hidden=!text;status.textContent=text}
+  if(box)box.replaceChildren(...skyHits.map(p=>h('button',{type:'button',class:'place-hit',onclick:()=>chooseSkyPlace(p)},p.name)));
+}
+function chooseSkyPlace(p){
+  if(!draft.sky)draft.sky=blankSky(currentCat(),sel);
+  draft.sky.lat=p.lat;
+  draft.sky.lng=p.lng;
+  draft.sky.name=p.name||'';
+  skyHits=[];
+  skyQuery=p.name||'';
+  skySearchStatus='';
+  render();
+}
+function onSkySearch(ev){
+  skyQuery=ev.target.value;
+  clearTimeout(skySearchTimer);
+  const q=skyQuery.trim();
+  if(q.length<2){skyHits=[];skySearchStatus='';paintSkySearch();return}
+  skySearchTimer=setTimeout(()=>searchSkyPlaces(q),1100);
+}
+function searchSkyPlaces(q){
+  const seq=++skySearchSeq;
+  if(!navigator.onLine){skySearchStatus='offline';skyHits=[];paintSkySearch();return}
+  skySearchStatus='searching';
+  paintSkySearch();
+  const ctrl=typeof AbortController==='function'?new AbortController():null;
+  if(searchSkyPlaces.ctrl)searchSkyPlaces.ctrl.abort();
+  searchSkyPlaces.ctrl=ctrl;
+  fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=0&q=${encodeURIComponent(q)}`,{headers:{Accept:'application/json'},signal:ctrl?ctrl.signal:undefined}).then(r=>{
+    if(!r.ok)throw new Error('search');
+    return r.json();
+  }).then(rows=>{
+    if(seq!==skySearchSeq||skyQuery.trim()!==q)return;
+    skyHits=(Array.isArray(rows)?rows:[]).map(r=>({name:String(r.display_name||'').slice(0,180),lat:Number(r.lat),lng:Number(r.lon)})).filter(p=>p.name&&Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+    skySearchStatus=skyHits.length?'':'none';
+    paintSkySearch();
+  }).catch(err=>{
+    if(err&&err.name==='AbortError')return;
+    if(seq!==skySearchSeq)return;
+    skyHits=[];
+    skySearchStatus='error';
+    paintSkySearch();
+  });
+}
+function skyLocate(){
+  if(!navigator.geolocation){skySearchStatus='denied';paintSkySearch();return}
+  skySearchStatus='searching';
+  paintSkySearch();
+  navigator.geolocation.getCurrentPosition(pos=>{
+    if(!draft.sky)draft.sky=blankSky(currentCat(),sel);
+    draft.sky.lat=pos.coords.latitude;
+    draft.sky.lng=pos.coords.longitude;
+    if(!(draft.sky.name||'').trim())draft.sky.name='My location';
+    skySearchStatus='';
+    skyHits=[];
+    render();
+  },()=>{skySearchStatus='denied';render()},{enableHighAccuracy:false,timeout:10000,maximumAge:600000});
+}
+function skyRememberPlace(cat){
+  readDraft();
+  const sky=normalizeSky(draft.sky);
+  if(!cat||!sky)return;
+  ensureSkyCat(cat);
+  const name=sky.name||(sky.lat.toFixed(2)+', '+sky.lng.toFixed(2));
+  sky.name=name;
+  draft.sky.name=name;
+  if(!cat.skyPlaces.some(p=>p&&Math.abs(p.lat-sky.lat)<0.02&&Math.abs(p.lng-sky.lng)<0.02)){
+    cat.skyPlaces.push({id:uid(),name,lat:sky.lat,lng:sky.lng,updatedAt:Date.now()});
+  }
+  cat.skyLast={name,lat:sky.lat,lng:sky.lng};
+  cat.skyLastAt=Date.now();
+  save();
+  render();
+}
+function skyUsePlace(cat,id){
+  const p=(cat.skyPlaces||[]).find(x=>x.id===id);
+  if(!p)return;
+  if(!draft.sky)draft.sky=blankSky(cat,sel);
+  draft.sky.lat=p.lat;
+  draft.sky.lng=p.lng;
+  draft.sky.name=p.name||'';
+  render();
+}
+function skyForgetPlace(cat,id){
+  cat.skyPlaces=(cat.skyPlaces||[]).filter(p=>p.id!==id);
+  save();
+  render();
+}
+function onSkySetting(cat,key,value){
+  cat[key]=value;
+  save();
+  render();
+}
+function skyPanel(cat){
+  ensureSkyCat(cat);
+  const sky=draft.sky||blankSky(cat,sel);
+  draft.sky=sky;
+  const fake={date:sel,sky};
+  const cons=window.Sky?Sky.constellations():[];
+  const places=cat.skyPlaces||[];
+  return h('div',{class:'card sky-panel',id:'skyPanel'},
+    h('label',{class:'lbl'},'Place',h('input',{id:'skySearch',class:'field',value:skyQuery,placeholder:'Search a place or address','aria-label':'Search a place or address',autocomplete:'off',oninput:onSkySearch})),
+    h('div',{class:'actions'},
+      h('button',{type:'button',class:'btn ghost',id:'skyLocate',onclick:skyLocate},'Use my location'),
+      h('button',{type:'button',class:'btn ghost',id:'skySavePlace',onclick:()=>skyRememberPlace(cat)},'Save place')),
+    h('p',{class:'muted sm',id:'skySearchStatus',hidden:true}),
+    h('div',{id:'skyHits',class:'place-results'}),
+    h('label',{class:'lbl'},'Place name',h('input',{id:'skyName',class:'field',value:sky.name||'','aria-label':'Place name',autocomplete:'off',oninput:ev=>{draft.sky.name=ev.target.value}})),
+    h('div',{class:'sky-loc'},
+      h('label',{class:'lbl'},'Latitude',h('input',{id:'skyLat',class:'field',inputmode:'decimal',value:sky.lat==null?'':String(Math.round(sky.lat*10000)/10000),'aria-label':'Latitude',oninput:onSkyCoord})),
+      h('label',{class:'lbl'},'Longitude',h('input',{id:'skyLng',class:'field',inputmode:'decimal',value:sky.lng==null?'':String(Math.round(sky.lng*10000)/10000),'aria-label':'Longitude',oninput:onSkyCoord}))),
+    places.length?h('div',{class:'sky-places',id:'skyPlaces'},...places.map(p=>h('span',{class:'sky-place'},
+      h('button',{type:'button',class:'chip-text',onclick:()=>skyUsePlace(cat,p.id)},p.name||'Place'),
+      h('button',{type:'button',class:'chip-x','aria-label':'Remove '+ (p.name||'place'),onclick:()=>skyForgetPlace(cat,p.id)},'×')))):null,
+    h('label',{class:'lbl'},'Time',h('input',{id:'skyTime',class:'field',type:'time',value:sky.time,oninput:onSkyTime})),
+    h('input',{id:'skyTimeRange',type:'range',min:'0',max:'1439',step:'5',value:String(window.Sky?Sky.minutes(sky.time):0),'aria-label':'Time of day',oninput:onSkyTime}),
+    h('label',{class:'lbl'},'Highlight',h('select',{id:'skyHighlight',class:'field','aria-label':'Highlighted constellation',onchange:ev=>onSkySetting(cat,'skyHighlight',ev.target.value)},
+      ...cons.map(c=>h('option',{value:c.id,selected:c.id===cat.skyHighlight?true:false},c.name)))),
+    h('label',{class:'check',for:'skyNames'},h('input',{id:'skyNames',type:'checkbox',checked:!!cat.skyNames,onchange:ev=>onSkySetting(cat,'skyNames',ev.target.checked)}),'Constellation names'),
+    h('label',{class:'lbl'},'Planet',h('select',{id:'skyPlanet',class:'field','aria-label':'Planet',onchange:ev=>onSkySetting(cat,'skyPlanet',ev.target.value)},
+      ...(window.Sky?Sky.planets:[]).map(p=>h('option',{value:p.id,selected:p.id===cat.skyPlanet?true:false},p.label)))),
+    h('label',{class:'lbl'},'Path ± '+cat.skyWindow+' days',h('input',{id:'skyWindow',type:'range',min:'20',max:'180',step:'10',value:String(cat.skyWindow),'aria-label':'Days around this entry',oninput:ev=>{
+      cat.skyWindow=Number(ev.target.value);
+      const lbl=ev.target.parentElement;
+      if(lbl&&lbl.firstChild)lbl.firstChild.textContent='Path ± '+cat.skyWindow+' days';
+      repaintSkyLive();
+    },onchange:ev=>onSkySetting(cat,'skyWindow',Number(ev.target.value))})),
+    ...skyReadout(fake,cat,true,true));
+}
+function skyInlineTags(e){
+  const cat=catById(e.categoryId);
+  if(!cat)return null;
+  const names=[...(cat.tags||[])];
+  (e.tags||[]).forEach(t=>{if(!names.some(n=>same(n,t)))names.push(t)});
+  return h('div',{class:'sky-inline-tags'},
+    h('p',{class:'watch'},'Tags you are watching'),
+    names.length?h('div',{class:'chips'},...names.map(tag=>{
+      const on=(e.tags||[]).some(t=>same(t,tag));
+      return h('span',{class:'chip'+(on?' on':''),'data-tag':tag},h('button',{type:'button',class:'chip-text',onclick:ev=>{
+        ev.stopPropagation();
+        e.tags=tagList(e.tags);
+        if(on)e.tags=e.tags.filter(t=>!same(t,tag));
+        else e.tags.push(tag);
+        saveBookEntry(e.id);
+        if(bookOpen)refreshBook();
+        else render();
+      }},tag));
+    })):h('p',{class:'muted sm'},'No tags yet.'),
+    h('div',{class:'tag-row'},
+      h('input',{class:'field','data-sky-tag':'1',placeholder:'New word, kept in this category','aria-label':'New word, kept in this category',autocomplete:'off',onkeydown:ev=>{
+        if(ev.key==='Enter'){ev.preventDefault();addSkyInlineTag(e,ev.target)}
+      }}),
+      h('button',{type:'button',class:'btn ghost',onclick:ev=>addSkyInlineTag(e,ev.target.parentElement.querySelector('[data-sky-tag]'))},'Add tag')));
+}
+function addSkyInlineTag(e,input){
+  const name=String(input&&input.value||'').trim();
+  if(input)input.value='';
+  const cat=catById(e.categoryId);
+  if(!cat||!name)return;
+  if(!cat.tags.some(t=>same(t,name)))cat.tags.push(name);
+  const canonical=cat.tags.find(t=>same(t,name))||name;
+  e.tags=tagList(e.tags);
+  if(!e.tags.some(t=>same(t,canonical)))e.tags.push(canonical);
+  saveBookEntry(e.id);
+  if(bookOpen)refreshBook();
+  else render();
+}
 function sortedCategories(){
-  const trackers=[],lists=[],todos=[],rest=[];
+  const trackers=[],lists=[],sky=[],todos=[],rest=[];
   state.categories.forEach(c=>{
     if(c.type==='tracker')trackers.push(c);
     else if(c.type==='list')lists.push(c);
+    else if(c.type==='sky')sky.push(c);
     else if(c.type==='todo')todos.push(c);
     else rest.push(c);
   });
-  return trackers.concat(lists,todos,rest);
+  return trackers.concat(lists,sky,todos,rest);
 }
 function renderCatScreen(){
   const cat=currentCat();
@@ -5806,6 +6185,7 @@ function renderCatScreen(){
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
     type.id==='weather'?weatherPanel(cat):null,
+    type.id==='sky'?skyPanel(cat):null,
     type.id==='list'?listBoard(cat):null,
     type.id==='list'?mealBoard(cat):null,
     ...(type.id==='tracker'?trackBoard(cat):[]),
@@ -5814,6 +6194,7 @@ function renderCatScreen(){
       list.length?list.map(entryCard):h('p',{class:'muted',id:'catEmpty'},'Nothing written.')),
     type.id==='tracker'?null:categoryBrowser(cat));
   fillAreas();
+  if(type.id==='sky')paintSkySearch();
   if(focusTitle){
     const el=(type.id==='tracker'&&!editingId)?null:($('entryTitle')||(!cat.place&&$('placeQuery')));
     if(el){el.focus();const n=el.value.length;if(el.setSelectionRange)el.setSelectionRange(n,n)}
@@ -5822,6 +6203,15 @@ function renderCatScreen(){
 }
 function entryPreview(e){
   const kind=typeOf(catById(e.categoryId)).id;
+  if(kind==='sky'){
+    const cat=catById(e.categoryId);
+    const when=skyWhen(e.date,e.sky);
+    const status=window.Sky&&when?Sky.status((cat&&cat.skyPlanet)||'Venus',when):'';
+    return h('div',{class:'preview-block'},
+      h('p',{class:'preview-title'},labelOr(e.title,'Sky')),
+      status?h('p',{class:'muted sm'},status):null,
+      e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
+  }
   if(kind==='weather'){
     const custom=weatherCustomTitle(e);
     return h('div',{class:'preview-block'},
@@ -6335,7 +6725,7 @@ function piecesOf(date,nodes){
 function allEntryWrap(piece){
   const closed=browseClosed.has(piece.key);
   return h('div',{class:'all-entry'+(closed?' closed':''),'data-all':piece.key,onclick:ev=>{
-    if(ev.target.closest('button,a,input,textarea,.field'))return;
+    if(ev.target.closest('button,a,input,textarea,.field,.sky-chart'))return;
     if(browseClosed.has(piece.key))browseClosed.delete(piece.key);
     else browseClosed.add(piece.key);
     render();
@@ -6738,6 +7128,7 @@ function renderCats(){
       if(type==='relationships'){cat.groups=[{id:uid(),name:'Friends'}];cat.people=[];}
       if(type==='record')cat.records=[];
       if(type==='walk'){cat.walks=[];cat.walkUnit='km';}
+      if(type==='sky'){cat.skyPlaces=[];cat.skyHighlight='Tau';cat.skyPlanet='Venus';cat.skyWindow=60;}
       state.categories.push(cat);
       addingCat=false;
       pendingCatName='';
@@ -7592,7 +7983,7 @@ function diffChildren(prevList,nextList,kind,prefix,ts,sig){
   });
 }
 function categoryShellSig(c){
-  return JSON.stringify({name:c.name,type:c.type,tags:c.tags,sectionNames:c.sectionNames,sectionTags:c.sectionTags,place:c.place,tracker:c.tracker});
+  return JSON.stringify({name:c.name,type:c.type,tags:c.tags,sectionNames:c.sectionNames,sectionTags:c.sectionTags,place:c.place,tracker:c.tracker,skyPlaces:c.skyPlaces,skyLast:c.skyLast,skyHighlight:c.skyHighlight,skyPlanet:c.skyPlanet,skyWindow:c.skyWindow,skyNames:c.skyNames});
 }
 function buryCategory(c,ts){
   bury('category',c.id,ts);
@@ -7984,7 +8375,7 @@ function noteEdits(){
     if(numAt(c.updatedAt)>numAt(state.gone.category[c.id]))unbury('category',c.id);
   });
   (prev.categories||[]).forEach(c=>{if(c&&c.id&&!seen.has(c.id))buryCategory(c,ts)});
-  diffChildren(prev.entries,state.entries,'entry','',ts,e=>JSON.stringify({categoryId:e.categoryId,date:e.date,title:e.title,note:e.note,tags:e.tags,images:e.images,sections:e.sections,timerStart:e.timerStart,timerEnd:e.timerEnd,durationMinutes:e.durationMinutes,condition:e.condition,temperature:e.temperature,dreams:e.dreams}));
+  diffChildren(prev.entries,state.entries,'entry','',ts,e=>JSON.stringify({categoryId:e.categoryId,date:e.date,title:e.title,note:e.note,tags:e.tags,images:e.images,sections:e.sections,timerStart:e.timerStart,timerEnd:e.timerEnd,durationMinutes:e.durationMinutes,condition:e.condition,temperature:e.temperature,dreams:e.dreams,sky:e.sky}));
   diffGoals(prev,state,ts);
   diffChildren(prev.themes,state.themes,'theme','',ts,t=>JSON.stringify({name:t.name,skin:t.skin}));
   diffChildren(prev.borders,state.borders,'border','',ts,b=>JSON.stringify({sourceId:b.sourceId,frameId:b.frameId,thickness:b.thickness,fit:b.fit,orientation:b.orientation,tint:b.tint||'',opacity:b.opacity,slice:b.slice}));
@@ -8229,6 +8620,15 @@ function unionNames(primary,secondary){
   [...(primary||[]),...(secondary||[])].forEach(n=>{if(typeof n==='string'&&!out.some(x=>x.toLowerCase()===n.toLowerCase()))out.push(n)});
   return out;
 }
+function mergeSkyPlaces(a,b){
+  const map=new Map();
+  [...(a||[]),...(b||[])].forEach(p=>{
+    if(!p||!p.id)return;
+    const cur=map.get(p.id);
+    if(!cur||numAt(p.updatedAt)>=numAt(cur.updatedAt))map.set(p.id,JSON.parse(JSON.stringify(p)));
+  });
+  return [...map.values()];
+}
 function mergeCategory(a,b,gone){
   const newer=numAt(b.updatedAt)>=numAt(a.updatedAt)?b:a;
   const older=newer===a?b:a;
@@ -8267,6 +8667,13 @@ function mergeCategory(a,b,gone){
   if(a.type==='walk'||b.type==='walk'||(a.walks||[]).length||(b.walks||[]).length){
     const walks=mergeWalks(a,b,gone);
     out.walks=walks.walks;out.walkUnit=walks.walkUnit;out.walkUnitAt=walks.walkUnitAt;
+  }
+  if(a.type==='sky'||b.type==='sky'||(a.skyPlaces||[]).length||(b.skyPlaces||[]).length){
+    out.skyPlaces=mergeSkyPlaces(a.skyPlaces,b.skyPlaces);
+    if(numAt(a.skyLastAt)>numAt(b.skyLastAt)&&a.skyLast){
+      out.skyLast=JSON.parse(JSON.stringify(a.skyLast));
+      out.skyLastAt=numAt(a.skyLastAt);
+    }
   }
   out.updatedAt=Math.max(numAt(a.updatedAt),numAt(b.updatedAt));
   return out;
