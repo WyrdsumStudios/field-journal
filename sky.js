@@ -144,10 +144,26 @@
     const observer=new A.Observer(lat,lng,0);
     return {A,time,observer,rot:A.Rotation_EQJ_HOR(time,observer)};
   }
-  function project(az,alt,cx,cy,R){
+  function facingOf(value){
+    const n=Number(value);
+    return Number.isFinite(n)?wrap(n):180;
+  }
+  const FACE_NAMES=[[0,'north'],[45,'northeast'],[90,'east'],[135,'southeast'],[180,'south'],[225,'southwest'],[270,'west'],[315,'northwest']];
+  function facingName(deg){
+    const d=facingOf(deg);
+    let name='south',best=999;
+    FACE_NAMES.forEach(([n,label])=>{
+      const diff=Math.abs(angDiff(n,d));
+      if(diff<best){best=diff;name=label}
+    });
+    if(best<=22.5)return 'Facing '+name;
+    return 'Facing '+Math.round(d)+'°';
+  }
+  /* The faced azimuth sits at the bottom. Labels stay upright; only positions move. */
+  function project(az,alt,cx,cy,R,facing){
     if(alt<-1.2)return null;
     const zd=Math.max(0,Math.min(1,(90-alt)/90));
-    const a=az*Math.PI/180;
+    const a=wrap(az-facingOf(facing)+180)*Math.PI/180;
     return {x:cx-Math.sin(a)*zd*R,y:cy-Math.cos(a)*zd*R};
   }
   function starSize(mag){
@@ -184,6 +200,8 @@
   function drawAllSky(canvas,opts){
     if(!canvas)return;
     const w=640,h=640,cx=320,cy=320,R=286;
+    const facing=facingOf(opts&&opts.facing);
+    const plot=(az,alt)=>project(az,alt,cx,cy,R,facing);
     const ctx=prepare(canvas,w,h);
     const hits=[];
     ctx.clearRect(0,0,w,h);
@@ -216,7 +234,7 @@
     const starPx=vecs.map((vec,i)=>{
       const hv=A.RotateVector(frame.rot,vec);
       const sph=A.HorizonFromVector(hv,'normal');
-      const p=project(sph.lon,sph.lat,cx,cy,R);
+      const p=plot(sph.lon,sph.lat);
       if(!p)return null;
       return {i,x:p.x,y:p.y,mag:D.stars[i][2],name:D.stars[i][3]>=0?D.names[D.stars[i][3]]:''};
     });
@@ -232,7 +250,7 @@
           const eq=A.VectorFromSphere(sph,frame.time);
           const hv=A.RotateVector(frame.rot,eq);
           const hor=A.HorizonFromVector(hv,'normal');
-          const p=project(hor.lon,hor.lat,cx,cy,R);
+          const p=plot(hor.lon,hor.lat);
           if(prev&&p){
             ctx.beginPath();
             ctx.moveTo(prev.x,prev.y);
@@ -260,9 +278,9 @@
     bodies.forEach(body=>{
       let hor;
       try{hor=horizonOf(body.id,opts.date,frame.observer)}catch(e){return}
-      const p=project(hor.az,hor.alt,cx,cy,R);
+      const p=plot(hor.az,hor.alt);
       if(!p)return;
-      if(body.id==='Moon')drawMoon(ctx,p.x,p.y,body.r,opts.date,sun,hor);
+      if(body.id==='Moon')drawMoon(ctx,p.x,p.y,body.r,opts.date,sun,hor,facing,'chart');
       else{
         ctx.beginPath();
         ctx.arc(p.x,p.y,body.r,0,Math.PI*2);
@@ -276,7 +294,7 @@
       const sph=new A.Spherical(con.dec,con.ra,1);
       const hv=A.RotateVector(frame.rot,A.VectorFromSphere(sph,frame.time));
       const hor=A.HorizonFromVector(hv,'normal');
-      const p=project(hor.lon,hor.lat,cx,cy,R);
+      const p=plot(hor.lon,hor.lat);
       if(!p)return;
       const zodiac=ZODIAC.has(con.id);
       const on=con.id===highlight;
@@ -296,7 +314,7 @@
       const sph=new A.Spherical(D.pleiades[1],D.pleiades[0],1);
       const hv=A.RotateVector(frame.rot,A.VectorFromSphere(sph,frame.time));
       const hor=A.HorizonFromVector(hv,'normal');
-      const ple=project(hor.lon,hor.lat,cx,cy,R);
+      const ple=plot(hor.lon,hor.lat);
       if(ple){
         labelBox(ctx,'Pleiades',ple.x,ple.y-12,12,'rgba(246,232,206,.95)','center');
         hits.push({kind:'star',name:'Pleiades',x:ple.x,y:ple.y,r:14});
@@ -312,18 +330,31 @@
     ctx.font='13px Georgia, serif';
     ctx.textAlign='center';
     ctx.textBaseline='middle';
-    [['N',cx,cy-R+16],['E',cx-R+16,cy],['S',cx,cy+R-16],['W',cx+R-16,cy]].forEach(([t,x,y])=>ctx.fillText(t,x,y));
+    [['N',0],['E',90],['S',180],['W',270]].forEach(([t,az])=>{
+      const p=project(az,0,cx,cy,R-18,facing);
+      if(p)ctx.fillText(t,p.x,p.y);
+    });
     canvas._skyHits=hits;
     canvas._skyBox={w,h};
   }
 
-  function drawMoon(ctx,x,y,r,date,sun,moon){
+  function drawMoon(ctx,x,y,r,date,sun,moon,facing,mode){
     const A=lib();
     const phase=A.MoonPhase(date);
     const limb=Math.cos(phase*Math.PI/180);
-    const aim=az=>{const a=az*Math.PI/180;return {x:-Math.sin(a),y:-Math.cos(a)}};
-    const ms=aim(moon.az),ss=aim(sun.az);
-    const angle=Math.atan2(ss.y-ms.y,ss.x-ms.x);
+    let angle;
+    if(mode==='horizon'){
+      const dx=angDiff(moon.az,sun.az);
+      const dy=-(sun.alt-moon.alt);
+      angle=Math.atan2(dy,dx);
+    }else{
+      const aim=az=>{
+        const rel=wrap(az-facingOf(facing)+180)*Math.PI/180;
+        return {x:-Math.sin(rel),y:-Math.cos(rel)};
+      };
+      const ms=aim(moon.az),ss=aim(sun.az);
+      angle=Math.atan2(ss.y-ms.y,ss.x-ms.x);
+    }
     ctx.save();
     ctx.translate(x,y);
     ctx.rotate(angle);
@@ -350,6 +381,187 @@
     ctx.lineWidth=1;
     ctx.stroke();
     ctx.restore();
+  }
+
+  function horizonGeom(){
+    const w=720,h=340,span=120,half=60,altMax=75;
+    const padX=32,padTop=28,padBot=42;
+    return {w,h,span,half,altMax,padX,padTop,padBot,innerW:w-padX*2,innerH:h-padTop-padBot,horizonY:h-padBot};
+  }
+  function projectStrip(az,alt,facing,g,loose){
+    const dAz=angDiff(facing,az);
+    const limit=loose?g.half+36:g.half+0.6;
+    if(Math.abs(dAz)>limit)return null;
+    if(alt<-1.2)return null;
+    if(!loose&&alt>g.altMax+1.5)return null;
+    const x=g.padX+((dAz+g.half)/g.span)*g.innerW;
+    const y=g.horizonY-(Math.max(0,Math.min(g.altMax,alt))/g.altMax)*g.innerH;
+    return {x,y,dAz};
+  }
+  function drawHorizon(canvas,opts){
+    if(!canvas)return;
+    const g=horizonGeom();
+    const facing=facingOf(opts&&opts.facing);
+    const ctx=prepare(canvas,g.w,g.h);
+    const hits=[];
+    ctx.clearRect(0,0,g.w,g.h);
+    const sky=ctx.createLinearGradient(0,0,0,g.horizonY);
+    sky.addColorStop(0,'#10192c');
+    sky.addColorStop(1,'#24344f');
+    roundRect(ctx,0,0,g.w,g.h,12);
+    ctx.fillStyle=sky;
+    ctx.fill();
+    ctx.fillStyle='#1c1610';
+    ctx.fillRect(0,g.horizonY,g.w,g.h-g.horizonY);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(g.padX,g.padTop-6,g.innerW,g.horizonY-(g.padTop-6));
+    ctx.clip();
+    if(!ready()||!opts||!Number.isFinite(opts.lat)||!Number.isFinite(opts.lng)||!opts.date){
+      ctx.restore();
+      ctx.fillStyle='#d7deea';
+      ctx.font='18px Georgia, serif';
+      ctx.textAlign='center';
+      ctx.fillText('Add a place to see the sky',g.w/2,g.h/2);
+      canvas._skyHits=[];
+      canvas._skyBox={w:g.w,h:g.h};
+      return;
+    }
+    const frame=horizontal(opts.date,opts.lat,opts.lng);
+    const A=frame.A;
+    const vecs=starVectors();
+    const D=data();
+    const placed=[];
+    const highlight=opts.highlight||'Tau';
+    ctx.strokeStyle='rgba(214,206,186,.16)';
+    ctx.lineWidth=1;
+    [30,60].forEach(alt=>{
+      const y=g.horizonY-(alt/g.altMax)*g.innerH;
+      ctx.beginPath();
+      ctx.moveTo(g.padX,y);
+      ctx.lineTo(g.w-g.padX,y);
+      ctx.stroke();
+    });
+    D.cons.forEach(con=>{
+      const on=con.id===highlight;
+      ctx.strokeStyle=on?'rgba(243,226,196,.92)':'rgba(176,190,210,.28)';
+      ctx.lineWidth=on?1.7:1;
+      con.lines.forEach(flat=>{
+        let prev=null;
+        for(let i=0;i<flat.length;i+=2){
+          const sph=new A.Spherical(flat[i+1],flat[i],1);
+          const eq=A.VectorFromSphere(sph,frame.time);
+          const hv=A.RotateVector(frame.rot,eq);
+          const hor=A.HorizonFromVector(hv,'normal');
+          const p=projectStrip(hor.lon,hor.lat,facing,g,true);
+          if(prev&&p){
+            ctx.beginPath();
+            ctx.moveTo(prev.x,prev.y);
+            ctx.lineTo(p.x,p.y);
+            ctx.stroke();
+            if(Math.abs(prev.dAz)<=g.half||Math.abs(p.dAz)<=g.half){
+              hits.push({kind:'con',name:con.name,x:(prev.x+p.x)/2,y:(prev.y+p.y)/2,x1:prev.x,y1:prev.y,x2:p.x,y2:p.y,r:12});
+            }
+          }
+          prev=p;
+        }
+      });
+    });
+    const starPx=vecs.map((vec,i)=>{
+      const hv=A.RotateVector(frame.rot,vec);
+      const sph=A.HorizonFromVector(hv,'normal');
+      const p=projectStrip(sph.lon,sph.lat,facing,g,false);
+      if(!p)return null;
+      return {i,x:p.x,y:p.y,mag:D.stars[i][2],name:D.stars[i][3]>=0?D.names[D.stars[i][3]]:''};
+    });
+    starPx.forEach(s=>{
+      if(!s)return;
+      ctx.beginPath();
+      ctx.arc(s.x,s.y,starSize(s.mag),0,Math.PI*2);
+      ctx.fillStyle=s.mag<1.5?'#f7f4ee':'rgba(214,224,236,.88)';
+      ctx.fill();
+      if(s.name)hits.push({kind:'star',name:s.name,x:s.x,y:s.y,r:Math.max(10,starSize(s.mag)+8)});
+      if(s.name&&s.mag<=1.5&&!(highlight==='Tau'&&s.name==='Aldebaran')){
+        labelBox(ctx,s.name,s.x,s.y-starSize(s.mag)-8,11,'rgba(236,228,210,.82)','center',placed);
+      }
+    });
+    const bodies=[...PLANETS.map(p=>({id:p.id,label:p.label,color:p.color,r:4.4})),{id:'Moon',label:'Moon',color:'#f6f1e6',r:10}];
+    const sun=horizonOf('Sun',opts.date,frame.observer);
+    bodies.forEach(body=>{
+      let hor;
+      try{hor=horizonOf(body.id,opts.date,frame.observer)}catch(e){return}
+      const p=projectStrip(hor.az,hor.alt,facing,g,false);
+      if(!p)return;
+      if(body.id==='Moon')drawMoon(ctx,p.x,p.y,body.r,opts.date,sun,hor,facing,'horizon');
+      else{
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,body.r,0,Math.PI*2);
+        ctx.fillStyle=body.color;
+        ctx.fill();
+      }
+      labelBox(ctx,body.label,p.x,p.y-body.r-9,12,'rgba(244,239,226,.92)','center',placed);
+      hits.push({kind:'planet',name:body.label,x:p.x,y:p.y,r:16});
+    });
+    D.cons.forEach(con=>{
+      const sph=new A.Spherical(con.dec,con.ra,1);
+      const hv=A.RotateVector(frame.rot,A.VectorFromSphere(sph,frame.time));
+      const hor=A.HorizonFromVector(hv,'normal');
+      const p=projectStrip(hor.lon,hor.lat,facing,g,false);
+      if(!p)return;
+      const zodiac=ZODIAC.has(con.id);
+      const on=con.id===highlight;
+      if(!on&&!zodiac&&!opts.names)return;
+      const size=on?15:zodiac?12:11;
+      const color=on?'rgba(246,232,206,.96)':zodiac?'rgba(226,214,186,.84)':'rgba(190,202,216,.62)';
+      labelBox(ctx,con.name,p.x,p.y,size,color,'center',placed);
+      hits.push({kind:'con',name:con.name,x:p.x,y:p.y,r:14});
+    });
+    if(highlight==='Tau'){
+      const alde=starPx.find(s=>s&&s.name==='Aldebaran');
+      if(alde){
+        labelBox(ctx,'Aldebaran',alde.x+16,alde.y-12,12,'rgba(246,232,206,.95)','left');
+        hits.push({kind:'star',name:'Aldebaran',x:alde.x,y:alde.y,r:14});
+      }
+      const sph=new A.Spherical(D.pleiades[1],D.pleiades[0],1);
+      const hv=A.RotateVector(frame.rot,A.VectorFromSphere(sph,frame.time));
+      const hor=A.HorizonFromVector(hv,'normal');
+      const ple=projectStrip(hor.lon,hor.lat,facing,g,false);
+      if(ple){
+        labelBox(ctx,'Pleiades',ple.x,ple.y-12,12,'rgba(246,232,206,.95)','center');
+        hits.push({kind:'star',name:'Pleiades',x:ple.x,y:ple.y,r:14});
+      }
+    }
+    ctx.restore();
+    ctx.strokeStyle='rgba(232,220,196,.7)';
+    ctx.lineWidth=1.4;
+    ctx.beginPath();
+    ctx.moveTo(g.padX,g.horizonY);
+    ctx.lineTo(g.w-g.padX,g.horizonY);
+    ctx.stroke();
+    ctx.fillStyle='rgba(232,220,196,.88)';
+    ctx.font='13px Georgia, serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    [['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]].forEach(([t,az])=>{
+      const dAz=angDiff(facing,az);
+      if(Math.abs(dAz)>g.half-8)return;
+      const x=g.padX+((dAz+g.half)/g.span)*g.innerW;
+      ctx.fillText(t,x,g.horizonY+16);
+    });
+    [30,60].forEach(alt=>{
+      const y=g.horizonY-(alt/g.altMax)*g.innerH;
+      ctx.fillStyle='rgba(214,206,186,.55)';
+      ctx.font='11px Georgia, serif';
+      ctx.textAlign='left';
+      ctx.fillText(alt+'°',8,y);
+    });
+    ctx.fillStyle='rgba(236,228,210,.9)';
+    ctx.font='13px Georgia, serif';
+    ctx.textAlign='left';
+    ctx.textBaseline='middle';
+    ctx.fillText(facingName(facing),14,16);
+    canvas._skyHits=hits;
+    canvas._skyBox={w:g.w,h:g.h};
   }
 
   function drawPath(canvas,opts){
@@ -521,12 +733,16 @@
     localWhen,
     minutes,
     fromMinutes,
+    wrap,
+    angDiff,
+    facingName,
     status,
     whatsUp,
     stations,
     apparent,
     constellations,
     drawAllSky,
+    drawHorizon,
     drawPath,
     pick
   };

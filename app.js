@@ -748,6 +748,7 @@ const TYPES={
       if(cat&&sky){
         cat.skyLast={name:sky.name,lat:sky.lat,lng:sky.lng};
         cat.skyLastAt=Date.now();
+        cat.skyFacing=skyFacingOf(sky.facing);
       }
     },
     fields(d){
@@ -1091,6 +1092,9 @@ function load(){
           if(!c.skyHighlight){c.skyHighlight='Tau';migrated=true}
           if(!c.skyPlanet){c.skyPlanet='Venus';migrated=true}
           if(!Number.isFinite(Number(c.skyWindow))){c.skyWindow=60;migrated=true}
+          if(!Number.isFinite(Number(c.skyFacing))){c.skyFacing=180;migrated=true}
+          else if(skyFacingOf(c.skyFacing)!==Number(c.skyFacing)){c.skyFacing=skyFacingOf(c.skyFacing);migrated=true}
+          if(typeof c.skyHorizon!=='boolean'){c.skyHorizon=false;migrated=true}
           const last=normalizeSky(c.skyLast,false);
           if(c.skyLast&&!last){c.skyLast=null;migrated=true}
           else if(last&&JSON.stringify(c.skyLast)!==JSON.stringify(last)){c.skyLast=last;migrated=true}
@@ -5805,6 +5809,7 @@ function renderRecords(cat){
   }
 }
 let skyQuery='',skyHits=[],skySearchStatus='',skySearchTimer=null,skySearchSeq=0;
+let skyCompassOn=false,skyCompassHandler=null,skyCompassNote='',skyFacingTimer=null;
 function skyDefaultTime(dateKey){
   if(dateKey===key(new Date())){
     const n=new Date();
@@ -5812,11 +5817,26 @@ function skyDefaultTime(dateKey){
   }
   return '22:00';
 }
+function skyFacingOf(value){
+  const n=Number(value);
+  if(!Number.isFinite(n))return 180;
+  let x=n%360;
+  if(x<0)x+=360;
+  return x;
+}
+function nearestOctant(facing){
+  let best=null,bd=999;
+  [0,45,90,135,180,225,270,315].forEach(d=>{
+    const diff=Math.abs(window.Sky?Sky.angDiff(d,facing):d-facing);
+    if(diff<bd){bd=diff;best=d}
+  });
+  return bd<=22.5?best:null;
+}
 function blankSky(cat,dateKey){
   const last=cat&&cat.skyLast;
   const lat=last&&Number.isFinite(Number(last.lat))?Number(last.lat):null;
   const lng=last&&Number.isFinite(Number(last.lng))?Number(last.lng):null;
-  return {lat,lng,name:last&&typeof last.name==='string'?last.name:'',time:skyDefaultTime(dateKey||sel)};
+  return {lat,lng,name:last&&typeof last.name==='string'?last.name:'',time:skyDefaultTime(dateKey||sel),facing:skyFacingOf(cat&&cat.skyFacing)};
 }
 function normalizeSky(raw,withTime){
   if(!raw||typeof raw!=='object')return null;
@@ -5824,7 +5844,10 @@ function normalizeSky(raw,withTime){
   if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180)return null;
   const name=typeof raw.name==='string'?raw.name.slice(0,180):'';
   const out={lat,lng,name};
-  if(withTime!==false)out.time=/^\d{2}:\d{2}$/.test(raw.time)?raw.time:'22:00';
+  if(withTime!==false){
+    out.time=/^\d{2}:\d{2}$/.test(raw.time)?raw.time:'22:00';
+    out.facing=skyFacingOf(raw.facing);
+  }
   return out;
 }
 function ensureSkyCat(cat){
@@ -5834,6 +5857,9 @@ function ensureSkyCat(cat){
   if(!cat.skyPlanet)cat.skyPlanet='Venus';
   const w=Number(cat.skyWindow);
   if(!Number.isFinite(w)||w<20||w>180)cat.skyWindow=60;
+  if(!Number.isFinite(Number(cat.skyFacing)))cat.skyFacing=180;
+  else cat.skyFacing=skyFacingOf(cat.skyFacing);
+  if(typeof cat.skyHorizon!=='boolean')cat.skyHorizon=false;
 }
 function skyWhen(dateKey,sky){
   if(!sky||!window.Sky)return null;
@@ -5849,24 +5875,81 @@ function skyOpts(e,cat){
     highlight:cat&&cat.skyHighlight||'Tau',
     planet:cat&&cat.skyPlanet||'Venus',
     windowDays:cat&&cat.skyWindow||60,
-    names:!!(cat&&cat.skyNames)
+    names:!!(cat&&cat.skyNames),
+    facing:skyFacingOf(sky.facing!=null?sky.facing:(cat&&cat.skyFacing))
   };
 }
-function skyCanvas(kind,e,cat,interactive){
+function skyPointer(canvas,ev){
+  const rect=canvas.getBoundingClientRect();
+  const box=canvas._skyBox||{w:1,h:1};
+  return {x:(ev.clientX-rect.left)/Math.max(1,rect.width)*box.w,y:(ev.clientY-rect.top)/Math.max(1,rect.height)*box.h};
+}
+function paintSkyCharts(root,entry,cat){
+  if(!root||!window.Sky)return;
+  const opts=skyOpts(entry,cat);
+  root.querySelectorAll('.sky-chart').forEach(wrap=>{
+    const canvas=wrap.querySelector('canvas');
+    if(!canvas)return;
+    if(wrap.classList.contains('sky-path'))Sky.drawPath(canvas,opts);
+    else if(wrap.classList.contains('sky-horizon'))Sky.drawHorizon(canvas,opts);
+    else Sky.drawAllSky(canvas,opts);
+  });
+}
+function paintFacingControls(){
+  if(!draft.sky)return;
+  const facing=skyFacingOf(draft.sky.facing);
+  const label=$('skyFacingLabel');
+  if(label&&window.Sky)label.textContent=Sky.facingName(facing);
+  const range=$('skyFacing');
+  if(range&&document.activeElement!==range)range.value=String(Math.round(facing)%360);
+  const nearest=nearestOctant(facing);
+  document.querySelectorAll('#skyFacingBtns .sky-face').forEach(btn=>{
+    btn.classList.toggle('on',Number(btn.getAttribute('data-facing'))===nearest);
+  });
+  const box=$('skyCompass');
+  if(box)box.checked=!!skyCompassOn;
+}
+function rememberFacing(now){
+  clearTimeout(skyFacingTimer);
+  if(now){skyFacingTimer=null;save();return}
+  skyFacingTimer=setTimeout(()=>{skyFacingTimer=null;save()},450);
+}
+function setSkyFacing(facing,entry,cat,live,persist){
+  const next=skyFacingOf(facing);
+  if(live){
+    const c=currentCat()||cat;
+    if(!draft.sky)draft.sky=blankSky(c,sel);
+    draft.sky.facing=next;
+    if(c&&c.type==='sky')c.skyFacing=next;
+    repaintSkyLive(true);
+    paintFacingControls();
+  }else if(entry&&entry.sky){
+    entry.sky.facing=next;
+    const c=catById(entry.categoryId)||cat;
+    if(c&&c.type==='sky')c.skyFacing=next;
+    const card=document.querySelector('.entry-card[data-entry="'+entry.id+'"]');
+    paintSkyCharts(card,entry,c||cat);
+  }
+  if(persist)rememberFacing(true);
+}
+function skyCanvas(kind,e,cat,interactive,live){
   const wrap=h('div',{class:'sky-chart sky-'+kind});
   const canvas=document.createElement('canvas');
   canvas.className='sky-canvas';
-  canvas.setAttribute('aria-label',kind==='path'?'Planet path':'Star chart');
+  canvas.setAttribute('aria-label',kind==='path'?'Planet path':kind==='horizon'?'Horizon view':'Star chart');
   const tip=h('p',{class:'sky-tip',hidden:true});
   wrap.append(canvas,tip);
   const opts=skyOpts(e,cat);
   if(window.Sky){
     if(kind==='path')Sky.drawPath(canvas,opts);
+    else if(kind==='horizon')Sky.drawHorizon(canvas,opts);
     else Sky.drawAllSky(canvas,opts);
   }
   if(interactive&&window.Sky){
+    if(kind!=='path')bindSkyTurn(canvas,kind,e,cat,!!live);
     canvas.addEventListener('click',ev=>{
       ev.stopPropagation();
+      if(canvas._skyDragged){canvas._skyDragged=false;tip.hidden=true;return}
       const hit=Sky.pick(canvas,ev);
       if(!hit){tip.hidden=true;return}
       tip.hidden=false;
@@ -5879,6 +5962,50 @@ function skyCanvas(kind,e,cat,interactive){
   }
   return wrap;
 }
+function bindSkyTurn(canvas,kind,entry,cat,live){
+  let drag=null,raf=0;
+  const current=()=>skyFacingOf(live?(draft.sky&&draft.sky.facing):(entry&&entry.sky&&entry.sky.facing));
+  canvas.addEventListener('pointerdown',ev=>{
+    if(ev.button!=null&&ev.button!==0)return;
+    const pt=skyPointer(canvas,ev);
+    drag={x:pt.x,y:pt.y,facing:current(),moved:false,id:ev.pointerId,next:null};
+    if(canvas.setPointerCapture){try{canvas.setPointerCapture(ev.pointerId)}catch(err){}}
+  });
+  canvas.addEventListener('pointermove',ev=>{
+    if(!drag||drag.id!==ev.pointerId)return;
+    const pt=skyPointer(canvas,ev);
+    if(!drag.moved&&Math.hypot(pt.x-drag.x,pt.y-drag.y)<8)return;
+    drag.moved=true;
+    if(skyCompassOn)stopSkyCompass();
+    const box=canvas._skyBox||(kind==='horizon'?{w:720,h:340}:{w:640,h:640});
+    let next;
+    if(kind==='horizon')next=Sky.wrap(drag.facing-((pt.x-drag.x)/box.w)*120);
+    else{
+      const a0=Math.atan2(drag.x-box.w/2,-(drag.y-box.h/2));
+      const a1=Math.atan2(pt.x-box.w/2,-(pt.y-box.h/2));
+      next=Sky.wrap(drag.facing+(a1-a0)*180/Math.PI);
+    }
+    drag.next=next;
+    if(raf)return;
+    raf=requestAnimationFrame(()=>{
+      raf=0;
+      if(!drag||drag.next==null)return;
+      setSkyFacing(drag.next,entry,cat,live,false);
+    });
+  });
+  const finish=ev=>{
+    if(!drag||(ev&&drag.id!==ev.pointerId))return;
+    const moved=drag.moved,next=drag.next;
+    drag=null;
+    if(raf){cancelAnimationFrame(raf);raf=0}
+    if(moved){
+      canvas._skyDragged=true;
+      setSkyFacing(next==null?current():next,entry,cat,live,true);
+    }
+  };
+  canvas.addEventListener('pointerup',finish);
+  canvas.addEventListener('pointercancel',finish);
+}
 function skyReadout(e,cat,interactive,live){
   const sky=e&&e.sky;
   const located=!!(sky&&Number.isFinite(Number(sky.lat))&&Number.isFinite(Number(sky.lng)));
@@ -5888,10 +6015,11 @@ function skyReadout(e,cat,interactive,live){
   const up=window.Sky&&when?Sky.whatsUp(Number(sky.lat),Number(sky.lng),when):'';
   return [
     located?h('p',{class:'muted sm sky-caption',id:live?'skyCaption':false},place+' · '+sky.time):h('p',{class:'muted sm'},'Add a place, or a latitude and longitude.'),
-    skyCanvas('all',e,cat,interactive),
+    skyCanvas('all',e,cat,interactive,live),
+    cat&&cat.skyHorizon?skyCanvas('horizon',e,cat,interactive,live):null,
     (located||live)?h('p',{class:'sky-status',id:live?'skyStatus':false,hidden:!status},status):null,
     (located||live)?h('p',{class:'muted sm sky-up',id:live?'skyUp':false,hidden:!up},up):null,
-    skyCanvas('path',e,cat,interactive)
+    skyCanvas('path',e,cat,interactive,live)
   ];
 }
 function readSkyFields(){
@@ -5907,7 +6035,7 @@ function readSkyFields(){
   const clock=$('skyTime');
   if(clock&&clock.value)draft.sky.time=clock.value;
 }
-function repaintSkyLive(){
+function repaintSkyLive(skipPath){
   const cat=currentCat();
   if(!cat||!window.Sky||!draft.sky)return;
   const fake={date:sel,sky:draft.sky};
@@ -5915,7 +6043,8 @@ function repaintSkyLive(){
   document.querySelectorAll('#skyPanel .sky-chart').forEach(wrap=>{
     const canvas=wrap.querySelector('canvas');
     if(!canvas)return;
-    if(wrap.classList.contains('sky-path'))Sky.drawPath(canvas,opts);
+    if(wrap.classList.contains('sky-path')){if(!skipPath)Sky.drawPath(canvas,opts);return}
+    if(wrap.classList.contains('sky-horizon'))Sky.drawHorizon(canvas,opts);
     else Sky.drawAllSky(canvas,opts);
   });
   const when=skyWhen(sel,draft.sky);
@@ -6051,6 +6180,71 @@ function onSkySetting(cat,key,value){
   save();
   render();
 }
+function skyCompassSupported(){
+  return typeof window.DeviceOrientationEvent!=='undefined';
+}
+function stopSkyCompass(){
+  skyCompassOn=false;
+  if(skyCompassHandler){
+    window.removeEventListener('deviceorientationabsolute',skyCompassHandler);
+    window.removeEventListener('deviceorientation',skyCompassHandler);
+    skyCompassHandler=null;
+  }
+  const box=$('skyCompass');
+  if(box)box.checked=false;
+}
+function skyHeading(ev){
+  if(ev&&typeof ev.webkitCompassHeading==='number'&&!Number.isNaN(ev.webkitCompassHeading))return ev.webkitCompassHeading;
+  if(ev&&typeof ev.alpha==='number'&&!Number.isNaN(ev.alpha))return (360-ev.alpha)%360;
+  return null;
+}
+function listenSkyCompass(){
+  stopSkyCompass();
+  skyCompassOn=true;
+  let lastAt=0,lastDeg=null;
+  skyCompassHandler=ev=>{
+    if(!skyCompassOn||!$('skyPanel')||!draft.sky)return;
+    const heading=skyHeading(ev);
+    if(heading==null)return;
+    const now=Date.now();
+    if(lastDeg!=null&&window.Sky&&Math.abs(Sky.angDiff(lastDeg,heading))<2&&now-lastAt<160)return;
+    lastAt=now;
+    lastDeg=heading;
+    setSkyFacing(heading,null,currentCat(),true,false);
+    rememberFacing(false);
+  };
+  window.addEventListener('deviceorientationabsolute',skyCompassHandler);
+  window.addEventListener('deviceorientation',skyCompassHandler);
+  const box=$('skyCompass');
+  if(box)box.checked=true;
+}
+function onSkyCompass(ev){
+  if(!ev.target.checked){
+    stopSkyCompass();
+    const note=$('skyCompassNote');
+    if(note)note.hidden=true;
+    return;
+  }
+  const DOE=window.DeviceOrientationEvent;
+  const ask=DOE&&typeof DOE.requestPermission==='function'?DOE.requestPermission():Promise.resolve('granted');
+  Promise.resolve(ask).then(result=>{
+    if(result!=='granted')throw new Error('denied');
+    listenSkyCompass();
+  }).catch(()=>{
+    stopSkyCompass();
+    skyCompassNote='Compass is unavailable on this device.';
+    const note=$('skyCompassNote');
+    if(note){note.hidden=false;note.textContent=skyCompassNote}
+  });
+}
+function onFacingPick(deg){
+  if(skyCompassOn)stopSkyCompass();
+  setSkyFacing(deg,null,currentCat(),true,true);
+}
+function onFacingRange(ev){
+  if(skyCompassOn)stopSkyCompass();
+  setSkyFacing(Number(ev.target.value),null,currentCat(),true,ev.type==='change');
+}
 function skyPanel(cat){
   ensureSkyCat(cat);
   const sky=draft.sky||blankSky(cat,sel);
@@ -6085,6 +6279,13 @@ function skyPanel(cat){
       if(lbl&&lbl.firstChild)lbl.firstChild.textContent='Path ± '+cat.skyWindow+' days';
       repaintSkyLive();
     },onchange:ev=>onSkySetting(cat,'skyWindow',Number(ev.target.value))})),
+    h('p',{class:'lbl',id:'skyFacingLabel'},window.Sky?Sky.facingName(skyFacingOf(sky.facing)):'Facing south'),
+    h('div',{class:'sky-facing',id:'skyFacingBtns'},...[['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]].map(([label,deg])=>
+      h('button',{type:'button',class:'btn ghost sky-face'+(nearestOctant(skyFacingOf(sky.facing))===deg?' on':''),'data-facing':String(deg),onclick:()=>onFacingPick(deg)},label))),
+    h('input',{id:'skyFacing',type:'range',min:'0',max:'359',step:'1',value:String(Math.round(skyFacingOf(sky.facing))%360),'aria-label':'Facing direction',oninput:onFacingRange,onchange:onFacingRange}),
+    skyCompassSupported()?h('label',{class:'check',for:'skyCompass'},h('input',{id:'skyCompass',type:'checkbox',checked:skyCompassOn?true:false,onchange:onSkyCompass}),'Use compass'):null,
+    h('p',{class:'muted sm',id:'skyCompassNote',hidden:!skyCompassNote},skyCompassNote||''),
+    h('label',{class:'check',for:'skyHorizon'},h('input',{id:'skyHorizon',type:'checkbox',checked:cat.skyHorizon?true:false,onchange:ev=>onSkySetting(cat,'skyHorizon',ev.target.checked)}),'Horizon view'),
     ...skyReadout(fake,cat,true,true));
 }
 function skyInlineTags(e){
@@ -7128,7 +7329,7 @@ function renderCats(){
       if(type==='relationships'){cat.groups=[{id:uid(),name:'Friends'}];cat.people=[];}
       if(type==='record')cat.records=[];
       if(type==='walk'){cat.walks=[];cat.walkUnit='km';}
-      if(type==='sky'){cat.skyPlaces=[];cat.skyHighlight='Tau';cat.skyPlanet='Venus';cat.skyWindow=60;}
+      if(type==='sky'){cat.skyPlaces=[];cat.skyHighlight='Tau';cat.skyPlanet='Venus';cat.skyWindow=60;cat.skyFacing=180;cat.skyHorizon=false;}
       state.categories.push(cat);
       addingCat=false;
       pendingCatName='';
@@ -7983,7 +8184,7 @@ function diffChildren(prevList,nextList,kind,prefix,ts,sig){
   });
 }
 function categoryShellSig(c){
-  return JSON.stringify({name:c.name,type:c.type,tags:c.tags,sectionNames:c.sectionNames,sectionTags:c.sectionTags,place:c.place,tracker:c.tracker,skyPlaces:c.skyPlaces,skyLast:c.skyLast,skyHighlight:c.skyHighlight,skyPlanet:c.skyPlanet,skyWindow:c.skyWindow,skyNames:c.skyNames});
+  return JSON.stringify({name:c.name,type:c.type,tags:c.tags,sectionNames:c.sectionNames,sectionTags:c.sectionTags,place:c.place,tracker:c.tracker,skyPlaces:c.skyPlaces,skyLast:c.skyLast,skyHighlight:c.skyHighlight,skyPlanet:c.skyPlanet,skyWindow:c.skyWindow,skyNames:c.skyNames,skyFacing:c.skyFacing,skyHorizon:c.skyHorizon});
 }
 function buryCategory(c,ts){
   bury('category',c.id,ts);
