@@ -6136,7 +6136,7 @@ function goalsOnDay(date){
 function goalDaySection(date,mode){
   const rows=goalsOnDay(date);
   if(!rows.length)return null;
-  return h('div',{class:'day-cat day-goals'+(mode==='book'?' card':'')},
+  return h('div',{class:'day-cat day-goals'},
     h('h3',{class:'day-cat-name'},'Goals'),
     ...rows.map(({goal,items,total,notes})=>h('article',{class:'entry-card goal-day-card','data-goal':goal.id},
       h('div',{class:'row top-row'},h('strong',{class:'goal-day-title'},goal.name||'Untitled')),
@@ -6828,13 +6828,12 @@ function dayGroups(k){
 }
 function dayBodyNodes(k,mode){
   const goals=goalDaySection(k,mode);
-  const book=mode==='book';
   return [
     ...dayGroups(k).map(g=>{
       const meals=g.cat&&g.cat.type==='list'?mealReview(g.cat,k):null;
       const review=g.cat&&g.cat.type==='tracker'?trackerReview(g.cat,k):g.cat&&g.cat.type==='relationships'?relReview(g.cat,k):g.cat&&g.cat.type==='record'?recordReview(g.cat,k):g.cat&&g.cat.type==='walk'?walkReview(g.cat,k):g.cat&&g.cat.type==='todo'?todoReview(g.cat,k):null;
       const entries=g.entries.length?g.entries.map(e=>entryCard(e,mode)):null;
-      return h('div',{class:'day-cat'+(book?' card':''),'data-cat-name':g.name},
+      return h('div',{class:'day-cat','data-cat-name':g.name},
         h('h3',{class:'day-cat-name'},g.name),
         review,
         entries,
