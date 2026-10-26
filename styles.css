@@ -586,7 +586,19 @@ html .book-editing .entry-actions .btn,html[data-look] .book-editing .entry-acti
 .sky-path .sky-canvas{border-radius:.45rem}
 .sky-tip{position:absolute;z-index:2;margin:0;padding:.15rem .45rem;border-radius:.35rem;background:rgba(251,248,242,.95);color:#1c1914;font-size:.82rem;line-height:1.3;pointer-events:none;transform:translateX(-50%)}
 .sky-status{margin:.15rem 0 .25rem}
-.sky-panel .check{display:flex;align-items:center;gap:.45rem;margin:.2rem 0 .7rem}
+.toggle{display:flex;align-items:flex-start;gap:.7rem;width:100%;max-width:100%;height:auto;min-height:2.75rem;margin:.35rem 0;padding:.45rem 0;border:0;border-radius:0;background:transparent;color:inherit;font-size:1rem;line-height:1.4;text-align:left;box-shadow:none;cursor:pointer}
+.toggle span{flex:1;min-width:0;overflow-wrap:anywhere;color:inherit}
+.toggle input{width:1.25rem;height:1.25rem;margin:.15rem 0 0;flex:0 0 auto;accent-color:var(--accent)}
+.sky-combo{position:relative}
+.sky-blurb{margin:.3rem 0 .75rem}
+.sky-combo-list{position:absolute;z-index:6;left:0;right:0;max-height:min(16rem,50vh);overflow:auto;margin:0;padding:.35rem;border:1px solid var(--line);border-radius:.6rem;background:var(--bg);color:inherit;box-shadow:0 10px 28px rgba(28,25,20,.16)}
+.sky-combo-group{margin:.45rem .35rem .1rem;font-size:.75rem;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.sky-combo-opt{display:block;width:100%;min-height:2.75rem;margin:0;padding:.45rem .65rem;border:0;border-radius:.45rem;background:transparent;color:inherit;text-align:left;font:inherit}
+.sky-combo-opt.on,.sky-combo-opt:hover{background:color-mix(in srgb, var(--accent) 16%, transparent)}
+.sky-combo-opt.current{box-shadow:inset 0 0 0 1px var(--accent)}
+.sky-combo-empty{margin:.4rem .35rem}
+.color-lab label{display:flex;align-items:center;gap:.45rem;color:inherit}
+.color-lab input[type=checkbox]{width:1.15rem;height:1.15rem;margin:0;padding:0;border:0;flex:none;accent-color:var(--accent);background:transparent}
 .sky-facing{display:flex;flex-wrap:wrap;gap:.35rem;margin:.15rem 0 .35rem}
 .sky-face{min-width:2.75rem;min-height:2.4rem;margin-top:0;padding:.3rem .45rem;border-radius:.55rem}
 .sky-face.on{background:var(--accent);color:var(--on-accent, var(--surface));border-color:var(--accent)}

@@ -5810,6 +5810,7 @@ function renderRecords(cat){
 }
 let skyQuery='',skyHits=[],skySearchStatus='',skySearchTimer=null,skySearchSeq=0;
 let skyCompassOn=false,skyCompassHandler=null,skyCompassNote='',skyFacingTimer=null;
+let skyHighlightOpen=false,skyHighlightQuery='',skyHighlightActive=0;
 function skyDefaultTime(dateKey){
   if(dateKey===key(new Date())){
     const n=new Date();
@@ -5865,12 +5866,17 @@ function skyWhen(dateKey,sky){
   if(!sky||!window.Sky)return null;
   return Sky.localWhen(dateKey,sky.time);
 }
+function skyNum(v){
+  if(v==null||v==='')return NaN;
+  const n=Number(v);
+  return Number.isFinite(n)?n:NaN;
+}
 function skyOpts(e,cat){
   ensureSkyCat(cat);
   const sky=e&&e.sky||{};
   return {
-    lat:Number(sky.lat),
-    lng:Number(sky.lng),
+    lat:skyNum(sky.lat),
+    lng:skyNum(sky.lng),
     date:skyWhen(e&&e.date,sky),
     highlight:cat&&cat.skyHighlight||'Tau',
     planet:cat&&cat.skyPlanet||'Venus',
@@ -6008,11 +6014,11 @@ function bindSkyTurn(canvas,kind,entry,cat,live){
 }
 function skyReadout(e,cat,interactive,live){
   const sky=e&&e.sky;
-  const located=!!(sky&&Number.isFinite(Number(sky.lat))&&Number.isFinite(Number(sky.lng)));
-  const place=located?((sky.name||'').trim()||(Number(sky.lat).toFixed(2)+', '+Number(sky.lng).toFixed(2))):'';
+  const located=!!(sky&&Number.isFinite(skyNum(sky.lat))&&Number.isFinite(skyNum(sky.lng)));
+  const place=located?((sky.name||'').trim()||(skyNum(sky.lat).toFixed(2)+', '+skyNum(sky.lng).toFixed(2))):'';
   const when=located?skyWhen(e.date,sky):null;
   const status=window.Sky&&when?Sky.status(cat&&cat.skyPlanet||'Venus',when):'';
-  const up=window.Sky&&when?Sky.whatsUp(Number(sky.lat),Number(sky.lng),when):'';
+  const up=window.Sky&&when&&located?Sky.whatsUp(skyNum(sky.lat),skyNum(sky.lng),when):'';
   return [
     located?h('p',{class:'muted sm sky-caption',id:live?'skyCaption':false},place+' · '+sky.time):h('p',{class:'muted sm'},'Add a place, or a latitude and longitude.'),
     skyCanvas('all',e,cat,interactive,live),
@@ -6245,12 +6251,120 @@ function onFacingRange(ev){
   if(skyCompassOn)stopSkyCompass();
   setSkyFacing(Number(ev.target.value),null,currentCat(),true,ev.type==='change');
 }
+function skyToggle(id,checked,label,onchange){
+  return h('label',{class:'toggle'},
+    h('input',{id,type:'checkbox',checked:checked?true:false,onchange}),
+    h('span',null,label));
+}
+function closeSkyCombo(){
+  skyHighlightOpen=false;
+  skyHighlightQuery='';
+  const input=$('skyHighlightSearch');
+  const cat=currentCat();
+  const info=window.Sky&&cat?Sky.constellationInfo(cat.skyHighlight):null;
+  if(input){
+    input.value=info?info.name:'';
+    input.setAttribute('aria-expanded','false');
+  }
+  const list=$('skyHighlightList');
+  if(list){list.hidden=true;list.replaceChildren()}
+}
+function chooseHighlight(id){
+  const cat=currentCat();
+  if(!cat)return;
+  skyHighlightOpen=false;
+  skyHighlightQuery='';
+  const input=$('skyHighlightSearch');
+  if(input&&document.activeElement===input)input.blur();
+  onSkySetting(cat,'skyHighlight',id);
+}
+function paintSkyCombo(cat,root){
+  const scope=root||document;
+  const list=scope.querySelector('#skyHighlightList');
+  const input=scope.querySelector('#skyHighlightSearch');
+  if(!list||!window.Sky)return;
+  list.hidden=!skyHighlightOpen;
+  if(input)input.setAttribute('aria-expanded',skyHighlightOpen?'true':'false');
+  if(!skyHighlightOpen){list.replaceChildren();return}
+  const found=Sky.searchConstellations(skyHighlightQuery);
+  const flat=[...found.zodiac,...found.rest];
+  if(skyHighlightActive>=flat.length)skyHighlightActive=Math.max(0,flat.length-1);
+  if(skyHighlightActive<0)skyHighlightActive=0;
+  const kids=[];
+  const add=rows=>{
+    if(!rows.length)return;
+    kids.push(h('p',{class:'sky-combo-group'},rows[0].zodiac?'Zodiac':'Other'));
+    rows.forEach(row=>{
+      const i=flat.indexOf(row);
+      kids.push(h('button',{type:'button',class:'sky-combo-opt'+(i===skyHighlightActive?' on':'')+(row.id===(cat&&cat.skyHighlight)?' current':''),role:'option','aria-selected':row.id===(cat&&cat.skyHighlight)?'true':'false','data-id':row.id,onmousedown:ev=>ev.preventDefault(),onclick:()=>chooseHighlight(row.id)},row.name));
+    });
+  };
+  add(found.zodiac);
+  add(found.rest);
+  if(!flat.length)kids.push(h('p',{class:'muted sm sky-combo-empty'},'No constellation matches.'));
+  list.replaceChildren(...kids);
+  const on=list.querySelector('.sky-combo-opt.on');
+  if(on&&on.scrollIntoView)on.scrollIntoView({block:'nearest'});
+}
+function onSkyComboKey(ev){
+  const cat=currentCat();
+  if(!window.Sky||!cat)return;
+  if(ev.key==='Escape'){ev.preventDefault();closeSkyCombo();return}
+  if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){
+    ev.preventDefault();
+    const found=Sky.searchConstellations(skyHighlightOpen?skyHighlightQuery:'');
+    const flat=[...found.zodiac,...found.rest];
+    const n=flat.length;
+    if(!n)return;
+    if(!skyHighlightOpen){
+      skyHighlightOpen=true;
+      skyHighlightQuery='';
+      const all=Sky.searchConstellations('');
+      const every=[...all.zodiac,...all.rest];
+      const idx=every.findIndex(r=>r.id===cat.skyHighlight);
+      skyHighlightActive=idx>=0?idx:0;
+      skyHighlightActive=(skyHighlightActive+(ev.key==='ArrowDown'?1:-1)+every.length)%every.length;
+    }else skyHighlightActive=(skyHighlightActive+(ev.key==='ArrowDown'?1:-1)+n)%n;
+    paintSkyCombo(cat);
+    return;
+  }
+  if(ev.key==='Enter'&&skyHighlightOpen){
+    ev.preventDefault();
+    const found=Sky.searchConstellations(skyHighlightQuery);
+    const flat=[...found.zodiac,...found.rest];
+    const row=flat[skyHighlightActive]||flat[0];
+    if(row)chooseHighlight(row.id);
+  }
+}
+function skyHighlightField(cat){
+  const info=window.Sky?Sky.constellationInfo(cat.skyHighlight):null;
+  const shown=skyHighlightOpen?skyHighlightQuery:(info?info.name:'Taurus');
+  const box=h('div',{class:'sky-combo',id:'skyHighlightBox'},
+    h('label',{class:'lbl'},'Highlight',h('input',{id:'skyHighlightSearch',class:'field',role:'combobox','aria-label':'Highlighted constellation','aria-expanded':skyHighlightOpen?'true':'false','aria-controls':'skyHighlightList','aria-autocomplete':'list',autocomplete:'off',placeholder:'Search constellations',value:shown,onfocus:ev=>{
+      skyHighlightOpen=true;
+      skyHighlightQuery='';
+      const rows=Sky.searchConstellations('');
+      const flat=[...rows.zodiac,...rows.rest];
+      const idx=flat.findIndex(r=>r.id===cat.skyHighlight);
+      skyHighlightActive=idx>=0?idx:0;
+      ev.target.value='';
+      paintSkyCombo(cat);
+    },oninput:ev=>{
+      skyHighlightOpen=true;
+      skyHighlightQuery=ev.target.value;
+      skyHighlightActive=0;
+      paintSkyCombo(cat);
+    },onkeydown:onSkyComboKey,onblur:()=>{setTimeout(()=>{if(!skyHighlightOpen)return;const box=$('skyHighlightBox');if(box&&box.contains(document.activeElement))return;closeSkyCombo()},140)}})),
+    h('p',{class:'muted sm sky-blurb',id:'skyHighlightBlurb'},info?info.blurb:''),
+    h('div',{id:'skyHighlightList',class:'sky-combo-list',role:'listbox',hidden:!skyHighlightOpen}));
+  if(skyHighlightOpen)paintSkyCombo(cat,box);
+  return box;
+}
 function skyPanel(cat){
   ensureSkyCat(cat);
   const sky=draft.sky||blankSky(cat,sel);
   draft.sky=sky;
   const fake={date:sel,sky};
-  const cons=window.Sky?Sky.constellations():[];
   const places=cat.skyPlaces||[];
   return h('div',{class:'card sky-panel',id:'skyPanel'},
     h('label',{class:'lbl'},'Place',h('input',{id:'skySearch',class:'field',value:skyQuery,placeholder:'Search a place or address','aria-label':'Search a place or address',autocomplete:'off',oninput:onSkySearch})),
@@ -6268,9 +6382,8 @@ function skyPanel(cat){
       h('button',{type:'button',class:'chip-x','aria-label':'Remove '+ (p.name||'place'),onclick:()=>skyForgetPlace(cat,p.id)},'×')))):null,
     h('label',{class:'lbl'},'Time',h('input',{id:'skyTime',class:'field',type:'time',value:sky.time,oninput:onSkyTime})),
     h('input',{id:'skyTimeRange',type:'range',min:'0',max:'1439',step:'5',value:String(window.Sky?Sky.minutes(sky.time):0),'aria-label':'Time of day',oninput:onSkyTime}),
-    h('label',{class:'lbl'},'Highlight',h('select',{id:'skyHighlight',class:'field','aria-label':'Highlighted constellation',onchange:ev=>onSkySetting(cat,'skyHighlight',ev.target.value)},
-      ...cons.map(c=>h('option',{value:c.id,selected:c.id===cat.skyHighlight?true:false},c.name)))),
-    h('label',{class:'check',for:'skyNames'},h('input',{id:'skyNames',type:'checkbox',checked:!!cat.skyNames,onchange:ev=>onSkySetting(cat,'skyNames',ev.target.checked)}),'Constellation names'),
+    skyHighlightField(cat),
+    skyToggle('skyNames',!!cat.skyNames,'Constellation names',ev=>onSkySetting(cat,'skyNames',ev.target.checked)),
     h('label',{class:'lbl'},'Planet',h('select',{id:'skyPlanet',class:'field','aria-label':'Planet',onchange:ev=>onSkySetting(cat,'skyPlanet',ev.target.value)},
       ...(window.Sky?Sky.planets:[]).map(p=>h('option',{value:p.id,selected:p.id===cat.skyPlanet?true:false},p.label)))),
     h('label',{class:'lbl'},'Path ± '+cat.skyWindow+' days',h('input',{id:'skyWindow',type:'range',min:'20',max:'180',step:'10',value:String(cat.skyWindow),'aria-label':'Days around this entry',oninput:ev=>{
@@ -6283,9 +6396,9 @@ function skyPanel(cat){
     h('div',{class:'sky-facing',id:'skyFacingBtns'},...[['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]].map(([label,deg])=>
       h('button',{type:'button',class:'btn ghost sky-face'+(nearestOctant(skyFacingOf(sky.facing))===deg?' on':''),'data-facing':String(deg),onclick:()=>onFacingPick(deg)},label))),
     h('input',{id:'skyFacing',type:'range',min:'0',max:'359',step:'1',value:String(Math.round(skyFacingOf(sky.facing))%360),'aria-label':'Facing direction',oninput:onFacingRange,onchange:onFacingRange}),
-    skyCompassSupported()?h('label',{class:'check',for:'skyCompass'},h('input',{id:'skyCompass',type:'checkbox',checked:skyCompassOn?true:false,onchange:onSkyCompass}),'Use compass'):null,
+    skyCompassSupported()?skyToggle('skyCompass',skyCompassOn,'Use compass',onSkyCompass):null,
     h('p',{class:'muted sm',id:'skyCompassNote',hidden:!skyCompassNote},skyCompassNote||''),
-    h('label',{class:'check',for:'skyHorizon'},h('input',{id:'skyHorizon',type:'checkbox',checked:cat.skyHorizon?true:false,onchange:ev=>onSkySetting(cat,'skyHorizon',ev.target.checked)}),'Horizon view'),
+    skyToggle('skyHorizon',!!cat.skyHorizon,'Horizon view',ev=>onSkySetting(cat,'skyHorizon',ev.target.checked)),
     ...skyReadout(fake,cat,true,true));
 }
 function skyInlineTags(e){
