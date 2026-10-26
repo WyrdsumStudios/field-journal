@@ -1167,6 +1167,7 @@ if(scrubJunk(state)){
 let sel=key(new Date()),view=parse(sel),addingCat=false,newType='notes',newTracker='shifts';
 let catView=null,browseList=false;
 const browseRows=new Set();
+const browseClosed=new Set();
 let openCat=null,openGoal=null,editingId=null,tagEdit=false,renamingTag=null,focusTitle=false;
 let addingGoal=false,newGoalType='checks',goalEditingId=null,itemEdit=false,itemRenaming=null,goalNameEdit=false;
 let listNameEdit=false,listItemEdit=null,listRenaming=null,listItemRenaming=null;
@@ -2321,6 +2322,56 @@ function removeEntry(id){
   forgetImages(ids);
   render();
 }
+let bookEditId=null;
+function saveBookEntry(id){
+  const e=state.entries.find(x=>x.id===id);
+  const card=document.querySelector('#book .book-editing[data-entry="'+id+'"]');
+  if(!e||!card)return;
+  const title=card.querySelector('[data-book-title]');
+  if(title)e.title=title.value.trim();
+  const kind=typeOf(catById(e.categoryId)).id;
+  if(kind==='timer'&&Array.isArray(e.sections)&&e.sections.length){
+    card.querySelectorAll('.field.note').forEach(el=>{
+      const s=e.sections.find(x=>x.id===el.getAttribute('data-section'));
+      if(s)s.text=noteKeep(fieldValue(el));
+    });
+    e.note=sectionText(e.sections,'notes');
+    e.dreams=sectionText(e.sections,'dreams');
+  }else{
+    const note=card.querySelector('.field.note');
+    if(note)e.note=noteKeep(fieldValue(note));
+  }
+  stamp(e);
+  save();
+}
+function finishBookEdit(id){
+  saveBookEntry(id);
+  bookEditId=null;
+  refreshBook();
+}
+function bookDelete(e){
+  const name=cleanLabel(e.title)||'this entry';
+  if(!confirm('Delete '+name+'?'))return;
+  if(bookEditId===e.id)bookEditId=null;
+  removeEntry(e.id);
+  refreshBook();
+}
+function bookEditor(e){
+  const kind=typeOf(catById(e.categoryId)).id;
+  const fields=[h('label',{class:'lbl'},'Title',h('input',{class:'field','data-book-title':'1',value:e.title||'','aria-label':'Title',autocomplete:'off',onblur:()=>saveBookEntry(e.id)}))];
+  if(kind==='timer'){
+    const sections=Array.isArray(e.sections)&&e.sections.length?e.sections:[{id:'notes',name:'Notes',text:e.note||''}];
+    sections.forEach(s=>{
+      fields.push(h('label',{class:'lbl'},s.name||'Note',noteBox({value:s.text||'','data-section':s.id,'aria-label':s.name||'Note',onblur:()=>saveBookEntry(e.id)})));
+    });
+  }else{
+    fields.push(noteLabel('Note',noteBox({value:e.note||'','aria-label':'Note',onblur:()=>saveBookEntry(e.id)})));
+  }
+  return h('article',{class:'entry-card book-editing','data-entry':e.id},
+    ...fields,
+    h('div',{class:'entry-actions'},
+      h('button',{type:'button',class:'btn',id:'bookDone',onclick:()=>finishBookEdit(e.id)},'Done')));
+}
 function deleteCategory(c){
   const noun=c.type==='relationships'?'people':c.type==='record'?'records':c.type==='walk'?'walks':c.type==='todo'?'to-dos':'entries';
   if(!confirm(`Delete category "${c.name}" and its ${noun}?`))return;
@@ -2481,19 +2532,35 @@ function imageSection(){
     imageError?h('p',{class:'warn',id:'imageError',role:'alert'},imageError):null,
     draft.images&&draft.images.length?h('div',{class:'thumbs',id:'draftThumbs'},...draft.images.map(id=>thumb(id,true))):null);
 }
-function entryCard(e){
+function entryCard(e,mode){
   const type=typeOf(catById(e.categoryId));
   const editing=e.id===editingId;
   const heading=type.id==='weather'?(weatherCustomTitle(e)||weatherHeading(e)):labelOr(e.title,'Untitled');
-  return h('article',{class:'entry-card'+(editing?' editing':''),'data-entry':e.id,onclick:ev=>{
-    if(ev.target.closest('button'))return;
+  const book=mode==='book';
+  const home=mode==='home';
+  const browse=mode==='browse';
+  const print=mode==='print';
+  if(book&&bookEditId===e.id)return bookEditor(e);
+  const attrs={class:'entry-card'+(editing?' editing':'')+(home||browse?' quiet':''),'data-entry':e.id};
+  if(!home&&!browse&&!print&&!book)attrs.onclick=ev=>{
+    if(ev.target.closest('button,a,input,textarea,.field'))return;
     editEntry(e);
-  }},
+  };
+  const actions=print?null:h('div',{class:'entry-actions'},
+    h('button',{type:'button',class:'entry-link',onclick:ev=>{
+      ev.stopPropagation();
+      if(book){bookEditId=e.id;refreshBook()}
+      else editEntry(e);
+    }},'Edit'),
+    h('button',{type:'button',class:'entry-link',onclick:ev=>{
+      ev.stopPropagation();
+      if(book)bookDelete(e);
+      else removeEntry(e.id);
+    }},'Delete'));
+  return h('article',attrs,
     h('div',{class:'row top-row'},h('strong',null,heading),h('span',{class:'muted sm'},fmt(e.date))),
     ...type.cardBits(e),
-    h('div',{class:'entry-actions'},
-      h('button',{type:'button',onclick:ev=>{ev.stopPropagation();editEntry(e)}},'Edit'),
-      h('button',{type:'button',onclick:ev=>{ev.stopPropagation();removeEntry(e.id)}},'Delete')));
+    actions);
 }
 function chip(tag){
   const on=draft.tags.some(t=>same(t,tag));
@@ -4098,7 +4165,7 @@ function flowPanel(cat){
         'Show cycle stats')));
 }
 function trackBoard(cat){
-  return [trackCalendar(cat),cat.tracker==='flow'?flowPanel(cat):shiftPanel(cat)];
+  return [trackCalendar(cat),trackerEntries(cat),cat.tracker==='flow'?flowPanel(cat):shiftPanel(cat)];
 }
 function trackerHomeBits(cat){
   if(cat.tracker==='flow'){
@@ -6048,10 +6115,10 @@ function goalsOnDay(date){
     return {goal:g,items,total:(g.items||[]).length,notes};
   }).filter(Boolean);
 }
-function goalDaySection(date){
+function goalDaySection(date,mode){
   const rows=goalsOnDay(date);
   if(!rows.length)return null;
-  return h('div',{class:'day-cat day-goals'},
+  return h('div',{class:'day-cat day-goals'+(mode==='book'?' card':'')},
     h('h3',{class:'day-cat-name'},'Goals'),
     ...rows.map(({goal,items,total,notes})=>h('article',{class:'entry-card goal-day-card','data-goal':goal.id},
       h('div',{class:'row top-row'},h('strong',{class:'goal-day-title'},goal.name||'Untitled')),
@@ -6210,11 +6277,11 @@ function historyPreview(cat,date){
   if(cat.type==='tracker')shiftsOn(cat,date).forEach(sh=>take(sh&&sh.label));
   return bits.slice(0,2).join(' · ');
 }
-function categoryHistoryNodes(cat,date){
+function categoryHistoryNodes(cat,date,mode){
   const entries=dayEntries(date,cat.id);
   const meals=cat.type==='list'?mealReview(cat,date):null;
   const review=cat.type==='tracker'?trackerReview(cat,date):cat.type==='relationships'?relHistoryNodes(cat,date):cat.type==='record'?recordReview(cat,date):cat.type==='walk'?walkReview(cat,date):cat.type==='todo'?todoReview(cat,date):null;
-  return [review,entries.length?entries.map(entryCard):null,meals].flat().filter(Boolean);
+  return [review,entries.length?entries.map(e=>entryCard(e,mode)):null,meals].flat().filter(Boolean);
 }
 function relHistoryNodes(cat,date){
   return relNotesOn(cat,date).map(row=>h('article',{class:'entry-card','data-rel-note':row.note.id},
@@ -6225,29 +6292,53 @@ function relHistoryNodes(cat,date){
     tagLine(row.note.tags),
     imageGrid(row.note.images)));
 }
-function browseToggleButton(){
-  return h('button',{type:'button',class:'browse-toggle',id:'browseToggle','aria-expanded':browseList?'true':'false',onclick:()=>{browseList=!browseList;render()}},
-    h('span',{class:'browse-toggle-label'},'All entries'),
-    h('span',{class:'browse-chevron','aria-hidden':'true'},browseList?'▾':'▸'));
+function piecesOf(date,nodes){
+  const list=(nodes||[]).flat().filter(Boolean);
+  const cards=[];
+  const rest=[];
+  list.forEach(node=>{
+    if(node.classList&&node.classList.contains('entry-card'))cards.push(node);
+    else if(node.querySelector&&node.querySelector('.entry-card')){
+      [...node.children].forEach(child=>{
+        if(child.classList&&child.classList.contains('entry-card'))cards.push(child);
+        else rest.push(child);
+      });
+    }else rest.push(node);
+  });
+  const out=[];
+  if(rest.length)out.push({key:date+'|rest',label:fmt(date),node:h('div',{class:'all-rest'},...rest)});
+  cards.forEach(card=>{
+    const id=card.getAttribute('data-entry')||card.getAttribute('data-walk')||card.getAttribute('data-record')||card.getAttribute('data-todo')||card.getAttribute('data-rel-note')||card.getAttribute('data-meal')||String(out.length);
+    const strong=card.querySelector('strong');
+    out.push({key:date+'|'+id,label:(strong&&strong.textContent)||fmt(date),node:card});
+  });
+  return out;
 }
-function browseListBlock(rows,bodyFor){
-  return h('div',{class:'browse-all',id:'browseAll'},
-    browseToggleButton(),
-    browseList?h('div',{class:'browse-list',id:'browseList'},
-      rows.length?rows.map(date=>{
-        const id='day|'+date;
-        const open=browseRows.has(id);
-        const preview=bodyFor.preview?bodyFor.preview(date):'';
-        return h('div',{class:'browse-row'+(open?' open':''),'data-browse':date},
-          h('button',{type:'button',class:'browse-head','aria-expanded':open?'true':'false',onclick:()=>{
-            if(open)browseRows.delete(id);else browseRows.add(id);
-            render();
-          }},
-            h('span',{class:'browse-date'},fmt(date)),
-            h('span',{class:'browse-name'},displayDayTitle(date)),
-            preview?h('span',{class:'muted sm browse-preview'},preview):null),
-          open?h('div',{class:'browse-body'},...(bodyFor.nodes(date)||[])):null);
-      }):h('p',{class:'muted sm',id:'browseEmpty'},'Nothing saved yet.')):null);
+function allEntryWrap(piece){
+  const closed=browseClosed.has(piece.key);
+  return h('div',{class:'all-entry'+(closed?' closed':''),'data-all':piece.key,onclick:ev=>{
+    if(ev.target.closest('button,a,input,textarea,.field'))return;
+    if(browseClosed.has(piece.key))browseClosed.delete(piece.key);
+    else browseClosed.add(piece.key);
+    render();
+  }},
+    h('p',{class:'all-entry-sum'},piece.label),
+    h('div',{class:'all-entry-body'},piece.node));
+}
+function allEntriesArrow(){
+  return h('button',{type:'button',class:'all-arrow'+(browseList?' up':''),id:'browseToggle','aria-label':'All entries','aria-expanded':browseList?'true':'false',onclick:()=>{
+    browseList=!browseList;
+    if(browseList)browseClosed.clear();
+    render();
+  }});
+}
+function allEntriesBlock(rows,nodesFor,extra){
+  const pieces=rows.flatMap(date=>piecesOf(date,nodesFor(date)));
+  return h('div',{class:'all-entries',id:'browseAll'},
+    allEntriesArrow(),
+    browseList?h('div',{class:'all-list',id:'browseList'},
+      extra||null,
+      pieces.length?pieces.map(allEntryWrap):h('p',{class:'muted sm',id:'browseEmpty'},extra?'Nothing matches.':'Nothing saved yet.')):null);
 }
 function browseChrome(dates,onStep){
   if(!(catView instanceof Date)||Number.isNaN(+catView))catView=parse(sel);
@@ -6266,12 +6357,11 @@ function browseChrome(dates,onStep){
 }
 function categoryBrowser(cat){
   const dates=categoryDates(cat);
-  return h('section',{class:'card cat-browse',id:'catBrowse'},
-    ...browseChrome(dates,dir=>stepMarkedDay(dates,dir)),
-    browseListBlock(dates.slice().reverse(),{
-      preview:date=>historyPreview(cat,date),
-      nodes:date=>categoryHistoryNodes(cat,date)
-    }));
+  return [
+    h('section',{class:'card cat-browse',id:'catBrowse'},
+      ...browseChrome(dates,dir=>stepMarkedDay(dates,dir))),
+    allEntriesBlock(dates.slice().reverse(),date=>categoryHistoryNodes(cat,date,'browse'))
+  ];
 }
 function trackerBrowseBar(cat){
   const dates=categoryDates(cat);
@@ -6279,23 +6369,33 @@ function trackerBrowseBar(cat){
   return h('div',{class:'tracker-browse',id:'catBrowse'},
     h('div',{class:'browse-jump'},
       h('button',{type:'button',id:'catPrevDay',disabled:!earlier,onclick:()=>stepMarkedDay(dates,-1)},'Previous entry'),
-      h('button',{type:'button',id:'catNextDay',disabled:!later,onclick:()=>stepMarkedDay(dates,1)},'Next entry')),
-    browseListBlock(dates.slice().reverse(),{
-      preview:date=>historyPreview(cat,date),
-      nodes:date=>categoryHistoryNodes(cat,date)
-    }));
+      h('button',{type:'button',id:'catNextDay',disabled:!later,onclick:()=>stepMarkedDay(dates,1)},'Next entry')));
+}
+function trackerEntries(cat){
+  return allEntriesBlock(categoryDates(cat).slice().reverse(),date=>categoryHistoryNodes(cat,date,'browse'));
 }
 function recordBrowser(cat,filter,shown,all){
   const dates=categoryDates(cat);
-  const list=h('div',{class:'record-browse',id:'recordBrowse'},
-    filter,
-    h('div',{class:'record-list',id:'recordList'},
-      shown.length?shown.map(recordRow):h('p',{class:'muted',id:'recordEmpty'},all.length?'Nothing matches.':'Nothing saved yet.')));
-  return h('section',{class:'card cat-browse',id:'catBrowse'},
-    ...browseChrome(dates,dir=>stepMarkedDay(dates,dir)),
-    h('div',{class:'browse-all',id:'browseAll'},
-      browseToggleButton(),
-      browseList?list:null));
+  const q=recordQuery.trim().toLowerCase();
+  const nodesFor=date=>{
+    let rows=recordsOn(cat,date).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    if(q)rows=rows.filter(r=>recordMatches(r,q));
+    return rows.map(r=>h('article',{class:'entry-card record-saved','data-record':r.id},
+      h('div',{class:'row top-row'},
+        h('strong',null,labelOr(r.title,'Untitled')),
+        h('span',{class:'muted sm record-when'},recordWhen(r))),
+      shownNote(r.note),
+      tagLine(r.tags),
+      imageGrid(r.images),
+      h('div',{class:'entry-actions'},
+        h('button',{type:'button',class:'entry-link',onclick:ev=>{ev.stopPropagation();editRecord(r)}},'Edit'),
+        h('button',{type:'button',class:'entry-link',onclick:ev=>{ev.stopPropagation();removeRecord(r.id)}},'Delete'))));
+  };
+  return [
+    h('section',{class:'card cat-browse',id:'catBrowse'},
+      ...browseChrome(dates,dir=>stepMarkedDay(dates,dir))),
+    allEntriesBlock(dates.slice().reverse(),nodesFor,browseList&&all.length?filter:null)
+  ];
 }
 function goalDates(g){
   const set=new Set();
@@ -6328,12 +6428,11 @@ function goalPreviewLine(g,date){
 }
 function goalBrowser(g){
   const dates=goalDates(g);
-  return h('section',{class:'card cat-browse',id:'catBrowse'},
-    ...browseChrome(dates,dir=>stepMarkedDay(dates,dir)),
-    browseListBlock(dates.slice().reverse(),{
-      preview:date=>goalPreviewLine(g,date),
-      nodes:date=>goalHistoryNodes(g,date)
-    }));
+  return [
+    h('section',{class:'card cat-browse',id:'catBrowse'},
+      ...browseChrome(dates,dir=>stepMarkedDay(dates,dir))),
+    allEntriesBlock(dates.slice().reverse(),date=>goalHistoryNodes(g,date))
+  ];
 }
 function flowLogCount(cat,date){
   return flowSummary(cat,date).reduce((n,g)=>n+g.count,0);
@@ -6693,14 +6792,15 @@ function dayGroups(k){
   if(orphans.length)groups.push({name:'Other',entries:orphans.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))});
   return groups;
 }
-function dayBodyNodes(k){
-  const goals=goalDaySection(k);
+function dayBodyNodes(k,mode){
+  const goals=goalDaySection(k,mode);
+  const book=mode==='book';
   return [
     ...dayGroups(k).map(g=>{
       const meals=g.cat&&g.cat.type==='list'?mealReview(g.cat,k):null;
       const review=g.cat&&g.cat.type==='tracker'?trackerReview(g.cat,k):g.cat&&g.cat.type==='relationships'?relReview(g.cat,k):g.cat&&g.cat.type==='record'?recordReview(g.cat,k):g.cat&&g.cat.type==='walk'?walkReview(g.cat,k):g.cat&&g.cat.type==='todo'?todoReview(g.cat,k):null;
-      const entries=g.entries.length?g.entries.map(entryCard):null;
-      return h('div',{class:'day-cat','data-cat-name':g.name},
+      const entries=g.entries.length?g.entries.map(e=>entryCard(e,mode)):null;
+      return h('div',{class:'day-cat'+(book?' card':''),'data-cat-name':g.name},
         h('h3',{class:'day-cat-name'},g.name),
         review,
         entries,
@@ -6732,7 +6832,7 @@ function renderDays(){
         summary?h('div',{class:'muted sm day-summary'},summary):null,
         h('button',{type:'button',class:'open-day',onclick:ev=>{ev.stopPropagation();select(k)}},'Open day')));
     const goals=goalDaySection(k);
-    const body=open&&(groups.length||goals)?h('div',{class:'day-body'},...dayBodyNodes(k)):null;
+    const body=open&&(groups.length||goals)?h('div',{class:'day-body'},...dayBodyNodes(k,'home')):null;
     return h('div',{class:'day-block'+(k===sel?' sel':''),'data-day':k},head,body);
   }));
 }
@@ -6929,7 +7029,7 @@ function fillPrint(from,to){
       h('p',{class:'print-kicker'},'Field Record'),
       h('h2',{class:'print-day-title'},name),
       showDate?h('p',{class:'print-day-date'},fmt(k)):null,
-      ...dayBodyNodes(k));
+      ...dayBodyNodes(k,'print'));
   }));
   printing=false;
   hydrateImages(root);
@@ -6958,7 +7058,7 @@ function bookPageNode(k){
     h('p',{class:'print-kicker'},'Field Record'),
     h('h2',{class:'print-day-title'},name),
     showDate?h('p',{class:'print-day-date'},fmt(k)):null,
-    ...dayBodyNodes(k));
+    ...dayBodyNodes(k,'book'));
 }
 function paintBookPage(node,k){
   if(!node)return;
@@ -6972,6 +7072,25 @@ function paintBookPage(node,k){
   try{page=bookPageNode(k)}finally{printing=was}
   node.replaceChildren(page);
   hydrateImages(node);
+}
+function refreshBook(){
+  if(!bookOpen)return;
+  const days=bookDays();
+  const page=$('bookPage');
+  if(!days.length){
+    bookIndex=0;
+    paintBookPage(page,'');
+    syncBookButtons();
+    return;
+  }
+  if(bookIndex>=days.length)bookIndex=days.length-1;
+  if(bookIndex<0)bookIndex=0;
+  paintBookPage(page,days[bookIndex]);
+  syncBookButtons();
+  if(bookEditId){
+    const el=document.querySelector('#bookPage .book-editing [data-book-title]');
+    if(el)el.focus();
+  }
 }
 function syncBookButtons(){
   const days=bookDays();
@@ -7004,6 +7123,7 @@ function openBook(){
   if(close)close.focus();
 }
 function closeBook(){
+  if(bookEditId){saveBookEntry(bookEditId);bookEditId=null}
   bookOpen=false;
   bookBusy=false;
   bookTurn++;
@@ -7015,6 +7135,7 @@ function closeBook(){
 }
 function turnBook(dir){
   if(!bookOpen||bookBusy)return;
+  if(bookEditId){saveBookEntry(bookEditId);bookEditId=null}
   const days=bookDays();
   const nextIndex=bookIndex+(dir<0?-1:1);
   if(nextIndex<0||nextIndex>=days.length)return;
@@ -8964,7 +9085,7 @@ document.addEventListener('keydown',ev=>{
   const bookOn=book&&!book.hidden;
   if(bookOn&&(ev.key==='Escape'||ev.key==='ArrowLeft'||ev.key==='ArrowRight')){
     const el=document.activeElement;
-    if(ev.key!=='Escape'&&el&&(el.isContentEditable||(el.closest&&el.closest('input,textarea,.field.note'))))return;
+    if(el&&(el.isContentEditable||(el.closest&&el.closest('input,textarea,.field.note'))))return;
     ev.preventDefault();
     if(ev.key==='Escape')closeBook();
     else turnBook(ev.key==='ArrowLeft'?-1:1);
