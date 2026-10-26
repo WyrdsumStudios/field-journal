@@ -113,18 +113,53 @@
     const hor=A.Horizon(time,observer,eq.ra,eq.dec,'normal');
     return {alt:hor.altitude,az:hor.azimuth,ra:eq.ra,dec:eq.dec};
   }
+  const glareCache=new Map();
+  /* Hidden when within 15° of the Sun, or up only in daylight or civil twilight. */
+  function tooCloseMap(date,observer){
+    const key=dayKey(date)+'|'+observer.latitude.toFixed(2)+'|'+observer.longitude.toFixed(2);
+    if(glareCache.has(key))return glareCache.get(key);
+    const A=lib();
+    const noon=A.MakeTime(new Date(date.getFullYear(),date.getMonth(),date.getDate(),12,0,0,0));
+    const flags={};
+    PLANETS.forEach(p=>{
+      flags[p.id]={elong:A.AngleFromSun(A.Body[p.id],noon)<15,up:false,dark:false};
+    });
+    const start=new Date(date.getFullYear(),date.getMonth(),date.getDate(),0,0,0,0);
+    for(let m=0;m<24*60;m+=15){
+      const when=new Date(start.getTime()+m*60000);
+      const sun=horizonOf('Sun',when,observer).alt;
+      PLANETS.forEach(p=>{
+        if(horizonOf(p.id,when,observer).alt<=0)return;
+        flags[p.id].up=true;
+        if(sun<-6)flags[p.id].dark=true;
+      });
+    }
+    const out={};
+    PLANETS.forEach(p=>{
+      const f=flags[p.id];
+      out[p.id]=!!(f.elong||(f.up&&!f.dark));
+    });
+    glareCache.set(key,out);
+    return out;
+  }
   function whatsUp(lat,lng,date){
     if(!ready()||!Number.isFinite(lat)||!Number.isFinite(lng)||!date)return '';
     const A=lib();
     const observer=new A.Observer(lat,lng,0);
+    const glare=tooCloseMap(date,observer);
     const up=[];
+    const hidden=[];
     PLANETS.forEach(p=>{
-      if(horizonOf(p.id,date,observer).alt>0)up.push(p.label);
+      if(glare[p.id])hidden.push(p.label);
+      else if(horizonOf(p.id,date,observer).alt>0)up.push(p.label);
     });
     if(horizonOf('Moon',date,observer).alt>0)up.push('the Moon');
-    if(!up.length)return "What's up tonight: none of the bright planets";
-    if(up.length===1)return "What's up tonight: "+up[0];
-    return "What's up tonight: "+up.slice(0,-1).join(', ')+' and '+up[up.length-1];
+    let line;
+    if(!up.length)line="What's up tonight: none of the bright planets";
+    else if(up.length===1)line="What's up tonight: "+up[0];
+    else line="What's up tonight: "+up.slice(0,-1).join(', ')+' and '+up[up.length-1];
+    hidden.forEach(name=>{line+='. '+name+': too close to the Sun to see'});
+    return line;
   }
 
   function starVectors(){
@@ -721,10 +756,136 @@
     pool.sort((a,b)=>a.d-b.d);
     return pool.length?pool[0].h:null;
   }
-  function constellations(){
+  const ZODIAC_ORDER=['Ari','Tau','Gem','Cnc','Leo','Vir','Lib','Sco','Sgr','Cap','Aqr','Psc'];
+  /* common name, brightest star, then extra search words */
+  const ABOUT={
+    And:['the Princess','Alpheratz'],
+    Ant:['the Air Pump',''],
+    Aps:['the Bird of Paradise',''],
+    Aqr:['the Water Bearer','', 'water'],
+    Aql:['the Eagle','Altair','eagle'],
+    Ara:['the Altar',''],
+    Ari:['the Ram','Hamal','ram'],
+    Aur:['the Charioteer','Capella'],
+    Boo:['the Herdsman','Arcturus','bootes','herdsman'],
+    Cae:['the Chisel',''],
+    Cam:['the Giraffe','','giraffe'],
+    Cnc:['the Crab','','crab'],
+    CVn:['the Hunting Dogs','','hunting dogs'],
+    CMa:['the Great Dog','Sirius','big dog','dog star'],
+    CMi:['the Little Dog','Procyon','little dog'],
+    Cap:['the Sea Goat','','goat','sea goat'],
+    Car:['the Keel','Canopus','keel'],
+    Cas:['the Queen','','queen','cass'],
+    Cen:['the Centaur','','centaur'],
+    Cep:['the King','','king'],
+    Cet:['the Whale','','whale','sea monster'],
+    Cha:['the Chameleon','','chameleon'],
+    Cir:['the Compass',''],
+    Col:['the Dove','','dove'],
+    Com:['Berenice\'s Hair','','hair','berenice'],
+    CrA:['the Southern Crown','','southern crown'],
+    CrB:['the Northern Crown','','northern crown'],
+    Crv:['the Crow','','crow','raven'],
+    Crt:['the Cup','','cup'],
+    Cru:['the Southern Cross','Acrux','southern cross','cross'],
+    Cyg:['the Swan','Deneb','swan','northern cross'],
+    Del:['the Dolphin','','dolphin'],
+    Dor:['the Dolphinfish','','swordfish'],
+    Dra:['the Dragon','','dragon'],
+    Equ:['the Foal','','little horse','foal'],
+    Eri:['the River','','river'],
+    For:['the Furnace','','furnace'],
+    Gem:['the Twins','Pollux','twins','castor'],
+    Gru:['the Crane','','crane'],
+    Her:['the Hero','','heracles'],
+    Hor:['the Clock','','clock'],
+    Hya:['the Water Snake',''],
+    Hyi:['the Male Hydra',''],
+    Ind:['the Indian',''],
+    Lac:['the Lizard','','lizard'],
+    Leo:['the Lion','Regulus','lion'],
+    LMi:['the Little Lion','','little lion'],
+    Lep:['the Hare','','hare'],
+    Lib:['the Scales','','scales','balance'],
+    Lup:['the Wolf','','wolf'],
+    Lyn:['the Lynx',''],
+    Lyr:['the Lyre','Vega','lyre','harp'],
+    Men:['the Table Mountain','','table'],
+    Mic:['the Microscope','','microscope'],
+    Mon:['the Unicorn','','unicorn'],
+    Mus:['the Fly','','fly'],
+    Nor:['the Level',''],
+    Oct:['the Octant','','octant'],
+    Oph:['the Serpent Bearer','','serpent bearer','snake holder'],
+    Ori:['the Hunter','Rigel','hunter','betelgeuse'],
+    Pav:['the Peacock','','peacock'],
+    Peg:['the Winged Horse','','winged horse'],
+    Per:['the Hero','Mirfak'],
+    Phe:['the Phoenix',''],
+    Pic:['the Painter','','easel'],
+    Psc:['the Fishes','','fish','fishes'],
+    PsA:['the Southern Fish','Fomalhaut','southern fish'],
+    Pup:['the Stern','','stern'],
+    Pyx:['the Compass','','mariner'],
+    Ret:['the Net','','net'],
+    Sge:['the Arrow','','arrow'],
+    Sgr:['the Archer','','archer','teapot'],
+    Sco:['the Scorpion','Antares','scorpion'],
+    Scl:['the Sculptor',''],
+    Sct:['the Shield','','shield'],
+    Ser:['the Serpent','','snake','serpent'],
+    Sex:['the Sextant','','sextant'],
+    Tau:['the Bull','Aldebaran','bull','pleiades','seven sisters','hyades'],
+    Tel:['the Telescope','','telescope'],
+    Tri:['the Triangle','','triangle'],
+    TrA:['the Southern Triangle','','southern triangle'],
+    Tuc:['the Toucan','','toucan'],
+    UMa:['the Great Bear','Dubhe','big dipper','great bear','plough','plow','dipper','big bear'],
+    UMi:['the Little Bear','Polaris','little dipper','little bear','north star','polaris','dipper'],
+    Vel:['the Sails','','sails'],
+    Vir:['the Maiden','Spica','virgin','maiden'],
+    Vol:['the Flying Fish','','flying fish'],
+    Vul:['the Fox','','fox']
+  };
+  function foldName(s){
+    return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  }
+  function blurbFor(con){
+    const a=ABOUT[con.id];
+    if(!a||!a[0])return con.name;
+    let text=con.name+' – '+a[0];
+    if(ZODIAC.has(con.id))text+=', zodiac';
+    if(a[1])text+='; brightest star '+a[1];
+    return text;
+  }
+  function catalog(){
     const D=data();
     if(!D)return [];
-    return D.cons.map(c=>({id:c.id,name:c.name})).sort((a,b)=>a.name.localeCompare(b.name));
+    if(D._catalog)return D._catalog;
+    const seen=new Set();
+    D._catalog=[];
+    D.cons.forEach(con=>{
+      if(!con||seen.has(con.id))return;
+      seen.add(con.id);
+      const extra=ABOUT[con.id]||[];
+      const hay=foldName([con.name,con.id,ZODIAC.has(con.id)?'zodiac':'',extra.join(' ')].join(' '));
+      D._catalog.push({id:con.id,name:con.name,zodiac:ZODIAC.has(con.id),blurb:blurbFor(con),hay});
+    });
+    return D._catalog;
+  }
+  function constellationInfo(id){
+    return catalog().find(c=>c.id===id)||null;
+  }
+  function searchConstellations(query){
+    const q=foldName(query).trim();
+    const rows=catalog().filter(c=>!q||c.hay.indexOf(q)>=0);
+    const zodiac=ZODIAC_ORDER.map(id=>rows.find(c=>c.id===id)).filter(Boolean);
+    const rest=rows.filter(c=>!c.zodiac).sort((a,b)=>a.name.localeCompare(b.name));
+    return {zodiac,rest};
+  }
+  function constellations(){
+    return catalog().map(c=>({id:c.id,name:c.name})).sort((a,b)=>a.name.localeCompare(b.name));
   }
 
   global.Sky={
@@ -741,6 +902,8 @@
     stations,
     apparent,
     constellations,
+    constellationInfo,
+    searchConstellations,
     drawAllSky,
     drawHorizon,
     drawPath,
