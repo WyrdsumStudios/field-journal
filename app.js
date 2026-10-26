@@ -3315,8 +3315,8 @@ function renderTodos(cat){
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
-    categoryBrowser(cat),
-    todoBoard(cat));
+    todoBoard(cat),
+    categoryBrowser(cat));
   if(focusTitle){
     const el=$('newTodo');
     if(el)el.focus();
@@ -3972,7 +3972,8 @@ function trackCalendar(cat){
     h('div',{class:'track-split'},
       h('div',{class:'track-grid',id:'trackGrid'},...cells),
       weeks),
-    flow&&cat.showCycle?cycleInfo(cat,sel):null);
+    flow&&cat.showCycle?cycleInfo(cat,sel):null,
+    trackerBrowseBar(cat));
 }
 function periodOverrideRow(cat,date){
   const mark=periodMark(cat,date);
@@ -5404,7 +5405,6 @@ function renderWalk(cat){
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
-    categoryBrowser(cat),
     walkEditorCard(cat),
     form,
     h('div',{class:'walk-list',id:'walkList'},
@@ -5415,7 +5415,8 @@ function renderWalk(cat){
         ...walkCardBits(cat,w),
         h('div',{class:'entry-actions'},
           h('button',{type:'button',onclick:ev=>{ev.stopPropagation();editWalk(w)}},'Edit'),
-          h('button',{type:'button',onclick:ev=>{ev.stopPropagation();removeWalk(w.id)}},'Delete')))):h('p',{class:'card muted',id:'walkEmpty'},'No walks for this day.')));
+          h('button',{type:'button',onclick:ev=>{ev.stopPropagation();removeWalk(w.id)}},'Delete')))):h('p',{class:'card muted',id:'walkEmpty'},'No walks for this day.')),
+    categoryBrowser(cat));
   fillAreas();
   paintWalkSearch();
   if(focusTitle){
@@ -5435,8 +5436,8 @@ function renderRelationships(cat){
       h('button',{type:'button',class:'back',id:'backBtn',onclick:()=>{if(openPerson)closePerson();else closeCategory()}},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
-    person?null:categoryBrowser(cat),
-    ...(person?personProfile(cat,person):[groupBoard(cat)]));
+    ...(person?personProfile(cat,person):[groupBoard(cat)]),
+    categoryBrowser(cat));
   if(focusTitle&&!person){
     const el=$('newGroup');
     if(el)el.focus();
@@ -5652,11 +5653,8 @@ function renderRecords(cat){
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
-    categoryBrowser(cat,{list:false}),
     form,
-    filter,
-    h('div',{class:'record-list',id:'recordList'},
-      shown.length?shown.map(recordRow):h('p',{class:'muted',id:'recordEmpty'},all.length?'Nothing matches.':'Nothing saved yet.')));
+    recordBrowser(cat,filter,shown,all));
   fillAreas();
   if(focusTitle){
     const el=$('entryTitle');
@@ -5722,14 +5720,14 @@ function renderCatScreen(){
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
-    categoryBrowser(cat),
     type.id==='weather'?weatherPanel(cat):null,
     type.id==='list'?listBoard(cat):null,
     type.id==='list'?mealBoard(cat):null,
     ...(type.id==='tracker'?trackBoard(cat):[]),
     form,
     h('div',{class:'entry-list',id:'catEntries'},
-      list.length?list.map(entryCard):h('p',{class:'muted',id:'catEmpty'},'Nothing written.')));
+      list.length?list.map(entryCard):h('p',{class:'muted',id:'catEmpty'},'Nothing written.')),
+    type.id==='tracker'?null:categoryBrowser(cat));
   fillAreas();
   if(focusTitle){
     const el=(type.id==='tracker'&&!editingId)?null:($('entryTitle')||(!cat.place&&$('placeQuery')));
@@ -6227,9 +6225,14 @@ function relHistoryNodes(cat,date){
     tagLine(row.note.tags),
     imageGrid(row.note.images)));
 }
+function browseToggleButton(){
+  return h('button',{type:'button',class:'browse-toggle',id:'browseToggle','aria-expanded':browseList?'true':'false',onclick:()=>{browseList=!browseList;render()}},
+    h('span',{class:'browse-toggle-label'},'All entries'),
+    h('span',{class:'browse-chevron','aria-hidden':'true'},browseList?'▾':'▸'));
+}
 function browseListBlock(rows,bodyFor){
   return h('div',{class:'browse-all',id:'browseAll'},
-    h('button',{type:'button',class:'browse-toggle',id:'browseToggle','aria-expanded':browseList?'true':'false',onclick:()=>{browseList=!browseList;render()}},browseList?'Hide all entries':'All entries'),
+    browseToggleButton(),
     browseList?h('div',{class:'browse-list',id:'browseList'},
       rows.length?rows.map(date=>{
         const id='day|'+date;
@@ -6261,15 +6264,38 @@ function browseChrome(dates,onStep){
     browseMonth(catView,new Set(dates))
   ];
 }
-function categoryBrowser(cat,opts){
-  opts=opts||{};
+function categoryBrowser(cat){
   const dates=categoryDates(cat);
-  const kids=browseChrome(dates,dir=>stepMarkedDay(dates,dir));
-  if(opts.list!==false)kids.push(browseListBlock(dates.slice().reverse(),{
-    preview:date=>historyPreview(cat,date),
-    nodes:date=>categoryHistoryNodes(cat,date)
-  }));
-  return h('section',{class:'card cat-browse',id:'catBrowse'},...kids);
+  return h('section',{class:'card cat-browse',id:'catBrowse'},
+    ...browseChrome(dates,dir=>stepMarkedDay(dates,dir)),
+    browseListBlock(dates.slice().reverse(),{
+      preview:date=>historyPreview(cat,date),
+      nodes:date=>categoryHistoryNodes(cat,date)
+    }));
+}
+function trackerBrowseBar(cat){
+  const dates=categoryDates(cat);
+  const earlier=dates.some(d=>d<sel),later=dates.some(d=>d>sel);
+  return h('div',{class:'tracker-browse',id:'catBrowse'},
+    h('div',{class:'browse-jump'},
+      h('button',{type:'button',id:'catPrevDay',disabled:!earlier,onclick:()=>stepMarkedDay(dates,-1)},'Previous entry'),
+      h('button',{type:'button',id:'catNextDay',disabled:!later,onclick:()=>stepMarkedDay(dates,1)},'Next entry')),
+    browseListBlock(dates.slice().reverse(),{
+      preview:date=>historyPreview(cat,date),
+      nodes:date=>categoryHistoryNodes(cat,date)
+    }));
+}
+function recordBrowser(cat,filter,shown,all){
+  const dates=categoryDates(cat);
+  const list=h('div',{class:'record-browse',id:'recordBrowse'},
+    filter,
+    h('div',{class:'record-list',id:'recordList'},
+      shown.length?shown.map(recordRow):h('p',{class:'muted',id:'recordEmpty'},all.length?'Nothing matches.':'Nothing saved yet.')));
+  return h('section',{class:'card cat-browse',id:'catBrowse'},
+    ...browseChrome(dates,dir=>stepMarkedDay(dates,dir)),
+    h('div',{class:'browse-all',id:'browseAll'},
+      browseToggleButton(),
+      browseList?list:null));
 }
 function goalDates(g){
   const set=new Set();
@@ -6530,10 +6556,10 @@ function renderGoalScreen(){
       h('button',{type:'button',class:'back',id:'goalBack',onclick:closeGoal},'Back'),
       h('p',{class:'muted',id:'goalDate'},fmt(sel))),
     goalHeading(g),
-    goalBrowser(g),
     form,
     h('div',{class:'entry-list',id:'goalEntries'},
-      list.length?list.map(goalEntryCard):h('p',{class:'muted',id:'goalEmpty'},'Nothing written.')));
+      list.length?list.map(goalEntryCard):h('p',{class:'muted',id:'goalEmpty'},'Nothing written.')),
+    goalBrowser(g));
   fillAreas();
   if(focusTitle&&!goalNameEdit){
     const el=$('entryTitle');
@@ -6920,6 +6946,120 @@ function exportPdf(){
   }
   if(empty)empty.hidden=true;
   setTimeout(()=>window.print(),60);
+}
+let bookOpen=false,bookIndex=0,bookBusy=false,bookTurn=0,bookTouch=null;
+function bookDays(){
+  return dayKeys().filter(k=>dayEntryCount(k)||goalsOnDay(k).length).sort();
+}
+function bookPageNode(k){
+  const name=displayDayTitle(k);
+  const showDate=name!==fmt(k);
+  return h('div',{class:'book-sheet','data-book-day':k},
+    h('p',{class:'print-kicker'},'Field Record'),
+    h('h2',{class:'print-day-title'},name),
+    showDate?h('p',{class:'print-day-date'},fmt(k)):null,
+    ...dayBodyNodes(k));
+}
+function paintBookPage(node,k){
+  if(!node)return;
+  if(!k){
+    node.replaceChildren(h('p',{class:'book-empty',id:'bookEmpty'},'No days with notes yet.'));
+    return;
+  }
+  const was=printing;
+  printing=true;
+  let page;
+  try{page=bookPageNode(k)}finally{printing=was}
+  node.replaceChildren(page);
+  hydrateImages(node);
+}
+function syncBookButtons(){
+  const days=bookDays();
+  const prev=$('bookPrev'),next=$('bookNext');
+  if(prev)prev.disabled=!days.length||bookIndex<=0;
+  if(next)next.disabled=!days.length||bookIndex>=days.length-1;
+}
+function openBook(){
+  if(backupOpen)closeBackup();
+  closePdf();
+  const root=$('book');
+  if(!root)return;
+  const days=bookDays();
+  bookOpen=true;
+  bookBusy=false;
+  root.hidden=false;
+  let i=days.indexOf(sel);
+  if(i<0){
+    for(let n=days.length-1;n>=0;n--){if(days[n]<=sel){i=n;break}}
+  }
+  if(i<0)i=0;
+  bookIndex=days.length?i:0;
+  const page=$('bookPage'),under=$('bookUnder'),leaf=$('bookLeaf');
+  if(under)under.replaceChildren();
+  if(leaf){leaf.replaceChildren();leaf.hidden=true;leaf.className='book-leaf'}
+  if(page)page.classList.remove('is-covered','is-fading');
+  paintBookPage(page,days[bookIndex]||'');
+  syncBookButtons();
+  const close=$('bookClose');
+  if(close)close.focus();
+}
+function closeBook(){
+  bookOpen=false;
+  bookBusy=false;
+  bookTurn++;
+  const root=$('book');
+  if(root)root.hidden=true;
+  const page=$('bookPage'),leaf=$('bookLeaf');
+  if(page)page.classList.remove('is-covered','is-fading');
+  if(leaf){leaf.className='book-leaf';leaf.hidden=true}
+}
+function turnBook(dir){
+  if(!bookOpen||bookBusy)return;
+  const days=bookDays();
+  const nextIndex=bookIndex+(dir<0?-1:1);
+  if(nextIndex<0||nextIndex>=days.length)return;
+  const page=$('bookPage'),under=$('bookUnder'),leaf=$('bookLeaf');
+  if(!page||!under||!leaf)return;
+  bookBusy=true;
+  const token=++bookTurn;
+  const reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const finish=()=>{
+    if(token!==bookTurn)return;
+    bookTurn++;
+    bookIndex=nextIndex;
+    paintBookPage(page,days[bookIndex]);
+    page.classList.remove('is-covered','is-fading');
+    under.replaceChildren();
+    leaf.replaceChildren();
+    leaf.hidden=true;
+    leaf.className='book-leaf';
+    bookBusy=false;
+    syncBookButtons();
+  };
+  if(reduce){
+    page.classList.add('is-fading');
+    setTimeout(finish,220);
+    return;
+  }
+  paintBookPage(under,days[nextIndex]);
+  paintBookPage(leaf,days[bookIndex]);
+  leaf.hidden=false;
+  page.classList.add('is-covered');
+  leaf.classList.remove('turn-next','turn-prev','turning');
+  void leaf.offsetWidth;
+  leaf.classList.add(dir<0?'turn-prev':'turn-next');
+  void leaf.offsetWidth;
+  leaf.classList.add('turning');
+  const onEnd=ev=>{
+    if(ev.target!==leaf||ev.propertyName!=='transform')return;
+    leaf.removeEventListener('transitionend',onEnd);
+    finish();
+  };
+  leaf.addEventListener('transitionend',onEnd);
+  setTimeout(()=>{
+    leaf.removeEventListener('transitionend',onEnd);
+    finish();
+  },1100);
 }
 function categorySkeleton(c,epoch){
   const next=JSON.parse(JSON.stringify(c));
@@ -8820,6 +8960,16 @@ $('dayTitle').addEventListener('input',e=>{
 $('dayPrev').onclick=()=>shift(-1);
 $('dayNext').onclick=()=>shift(1);
 document.addEventListener('keydown',ev=>{
+  const book=$('book');
+  const bookOn=book&&!book.hidden;
+  if(bookOn&&(ev.key==='Escape'||ev.key==='ArrowLeft'||ev.key==='ArrowRight')){
+    const el=document.activeElement;
+    if(ev.key!=='Escape'&&el&&(el.isContentEditable||(el.closest&&el.closest('input,textarea,.field.note'))))return;
+    ev.preventDefault();
+    if(ev.key==='Escape')closeBook();
+    else turnBook(ev.key==='ArrowLeft'?-1:1);
+    return;
+  }
   if(!ev.altKey||ev.metaKey||ev.ctrlKey||ev.shiftKey)return;
   if(ev.key!=='ArrowLeft'&&ev.key!=='ArrowRight')return;
   const el=document.activeElement;
@@ -9265,6 +9415,30 @@ $('backupLater').onclick=snoozeBackup;
 $('exportBackup').onclick=()=>exportBackup();
 $('daysPdf').onclick=openPdf;
 $('exportPdf').onclick=openPdf;
+$('daysBook').onclick=openBook;
+$('backupBook').onclick=openBook;
+$('bookClose').onclick=closeBook;
+$('bookPrev').onclick=()=>turnBook(-1);
+$('bookNext').onclick=()=>turnBook(1);
+const bookStage=$('bookStage');
+if(bookStage){
+  bookStage.addEventListener('touchstart',ev=>{
+    if(ev.target.closest&&ev.target.closest('button,a'))return;
+    const t=ev.touches&&ev.touches[0];
+    if(!t)return;
+    bookTouch={x:t.clientX,y:t.clientY};
+  },{passive:true});
+  bookStage.addEventListener('touchend',ev=>{
+    if(!bookTouch)return;
+    const t=ev.changedTouches&&ev.changedTouches[0];
+    const start=bookTouch;
+    bookTouch=null;
+    if(!t)return;
+    const dx=t.clientX-start.x,dy=t.clientY-start.y;
+    if(Math.abs(dx)<50||Math.abs(dx)<Math.abs(dy))return;
+    turnBook(dx<0?1:-1);
+  },{passive:true});
+}
 $('pdfClose').onclick=closePdf;
 $('pdfModal').addEventListener('click',ev=>{if(ev.target.id==='pdfModal')closePdf()});
 $('pdfThisWeek').onclick=()=>{const s=weekSpan(key(new Date()),0);setPdfRange(s[0],s[1])};

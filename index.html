@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=EB+Garamond:ital,wght@0,500;0,600;1,500&family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Pixelify+Sans:wght@400;500;600&family=Press+Start+2P&family=Special+Elite&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=22">
-<link rel="stylesheet" href="styles.css?v=28"></head>
+<link rel="stylesheet" href="styles.css?v=29"></head>
 <body>
 <button id="updateBanner" class="update-banner" type="button" hidden>Update ready, tap to refresh</button>
 <main class="wrap">
@@ -46,15 +46,27 @@
 <div class="cal-nav"><button id="earlier">Earlier</button><button id="today">Today</button><button id="later">Later</button></div>
 <div id="monthPicker" class="picker" role="dialog" aria-label="Choose month and year" hidden></div>
 <div id="calGrid" class="cal-grid"></div></section>
-<section class="card mt4"><div class="row days-head"><h2>Days</h2><button type="button" class="btn ghost" id="daysPdf">Export PDF</button></div><p id="daysEmpty" class="muted">Name a day, or save an entry, and it will show up here.</p><div id="daysList" class="days"></div></section>
+<section class="card mt4"><div class="row days-head"><h2>Days</h2><div class="days-tools"><button type="button" class="btn ghost" id="daysBook">Book</button><button type="button" class="btn ghost" id="daysPdf">Export PDF</button></div></div><p id="daysEmpty" class="muted">Name a day, or save an entry, and it will show up here.</p><div id="daysList" class="days"></div></section>
 </div>
 <section id="catScreen" class="cat-screen" hidden></section>
 <section id="goalScreen" class="cat-screen" hidden></section>
 </main>
 <nav id="dayNav" class="day-nav" aria-label="Change day">
-<button type="button" id="dayPrev" class="day-jump" aria-label="Previous day">‹</button>
-<button type="button" id="dayNext" class="day-jump" aria-label="Next day">›</button>
+<button type="button" id="dayPrev" class="day-jump" aria-label="Previous day"><span class="day-jump-mark" aria-hidden="true">‹</span><span class="day-jump-label">Previous</span></button>
+<button type="button" id="dayNext" class="day-jump" aria-label="Next day"><span class="day-jump-mark" aria-hidden="true">›</span><span class="day-jump-label">Next</span></button>
 </nav>
+<div id="book" class="book" hidden>
+<button type="button" id="bookClose" class="book-close">Close</button>
+<div class="book-stage" id="bookStage">
+<div class="book-under" id="bookUnder"></div>
+<div class="book-page" id="bookPage"></div>
+<div class="book-leaf" id="bookLeaf" hidden></div>
+</div>
+<div class="book-nav">
+<button type="button" id="bookPrev" class="book-turn">Previous</button>
+<button type="button" id="bookNext" class="book-turn">Next</button>
+</div>
+</div>
 <div id="lookModal" class="look-modal" hidden>
 <div class="look-panel card" role="dialog" aria-modal="true" aria-labelledby="lookTitle">
 <div class="row look-head"><h2 id="lookTitle">Look</h2><button type="button" id="lookClose" class="btn ghost">Close</button></div>
@@ -70,6 +82,7 @@
 <div class="actions">
 <button type="button" class="btn" id="exportBackup">Export backup</button>
 <button type="button" class="btn ghost" id="importBackup">Import backup</button>
+<button type="button" class="btn ghost" id="backupBook">Book</button>
 <button type="button" class="btn ghost" id="exportPdf">Export PDF</button>
 <input id="importFile" class="file-input" type="file" accept="application/json,.json" aria-label="Choose a backup file">
 </div>
@@ -122,4 +135,4 @@
 <img id="lightboxImg" alt="Attached image">
 </div>
 <script src="vendor/leaflet/leaflet.js?v=22"></script>
-<script src="app.js?v=28"></script></body></html>
+<script src="app.js?v=29"></script></body></html>
