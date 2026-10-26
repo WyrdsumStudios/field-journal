@@ -1545,6 +1545,9 @@ function h(tag,attrs,...kids){
   });
   return e;
 }
+function place(parent,...kids){
+  parent.replaceChildren(...kids.flat().filter(c=>c!=null&&c!==false));
+}
 const NB='\uE000',NB_='\uE001',NI='\uE002',NI_='\uE003',NU='\uE004',NU_='\uE005';
 function notePlain(s){return junkText(s).replace(/[\uE000-\uE005]/g,'')}
 function noteKeep(s){
@@ -3307,7 +3310,7 @@ function renderTodos(cat){
   ensureTodos(cat);
   const root=$('catScreen');
   root.dataset.type='todo';
-  root.replaceChildren(
+  place(root,
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
@@ -5396,7 +5399,7 @@ function renderWalk(cat){
       }},'Cancel'):null));
   const root=$('catScreen');
   root.dataset.type='walk';
-  root.replaceChildren(
+  place(root,
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
@@ -5427,7 +5430,7 @@ function renderRelationships(cat){
   const person=currentPerson();
   const root=$('catScreen');
   root.dataset.type='relationships';
-  root.replaceChildren(
+  place(root,
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'backBtn',onclick:()=>{if(openPerson)closePerson();else closeCategory()}},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
@@ -5644,7 +5647,7 @@ function renderRecords(cat){
       }})):null;
   const root=$('catScreen');
   root.dataset.type='record';
-  root.replaceChildren(
+  place(root,
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
@@ -5714,7 +5717,7 @@ function renderCatScreen(){
         freshDraft(cat);
         render();
       }},'Cancel'):null));
-  root.replaceChildren(
+  place(root,
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'backBtn',onclick:closeCategory},'Back'),
       h('p',{class:'muted',id:'catDate'},fmt(sel))),
@@ -6522,7 +6525,7 @@ function renderGoalScreen(){
         render();
       }},'Cancel'):null),
     h('p',{class:'goal-delete-row'},h('button',{type:'button',class:'goal-delete',id:'deleteGoal',onclick:()=>deleteGoal(g)},'Delete goal')));
-  root.replaceChildren(
+  place(root,
     h('div',{class:'cat-top'},
       h('button',{type:'button',class:'back',id:'goalBack',onclick:closeGoal},'Back'),
       h('p',{class:'muted',id:'goalDate'},fmt(sel))),
@@ -9237,7 +9240,7 @@ function renderLook(){
   const presets=LOOKS.map(lookButton);
   const plains=PLAINS.map(lookButton);
   const saved=state.themes.map(savedRow);
-  $('lookList').replaceChildren(...presets,h('p',{class:'look-group'},'Plain colours'),...plains,saved.length?h('div',{class:'saved-list'},...saved):null);
+  place($('lookList'),...presets,h('p',{class:'look-group'},'Plain colours'),...plains,saved.length?h('div',{class:'saved-list'},...saved):null);
   const host=$('lookCustom');
   if(host){host.replaceChildren(customizeForm());hydrateImages(host)}
 }
