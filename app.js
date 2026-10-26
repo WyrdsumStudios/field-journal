@@ -2323,9 +2323,16 @@ function removeEntry(id){
   render();
 }
 let bookEditId=null;
+function inlineEditCard(id){
+  if(bookOpen){
+    const inBook=document.querySelector('#book .book-editing[data-entry="'+id+'"]');
+    if(inBook)return inBook;
+  }
+  return document.querySelector('.day-body .book-editing[data-entry="'+id+'"]');
+}
 function saveBookEntry(id){
   const e=state.entries.find(x=>x.id===id);
-  const card=document.querySelector('#book .book-editing[data-entry="'+id+'"]');
+  const card=inlineEditCard(id);
   if(!e||!card)return;
   const title=card.querySelector('[data-book-title]');
   if(title)e.title=title.value.trim();
@@ -2347,7 +2354,17 @@ function saveBookEntry(id){
 function finishBookEdit(id){
   saveBookEntry(id);
   bookEditId=null;
-  refreshBook();
+  if(bookOpen)refreshBook();
+  render();
+}
+function startInlineEdit(id){
+  bookEditId=id;
+  if(bookOpen)refreshBook();
+  else{
+    render();
+    const el=document.querySelector('.day-body .book-editing [data-book-title]');
+    if(el)el.focus();
+  }
 }
 function bookDelete(e){
   const name=cleanLabel(e.title)||'this entry';
@@ -2540,7 +2557,8 @@ function entryCard(e,mode){
   const home=mode==='home';
   const browse=mode==='browse';
   const print=mode==='print';
-  if(book&&bookEditId===e.id)return bookEditor(e);
+  const inlineHere=bookEditId===e.id&&((book&&bookOpen)||(home&&!bookOpen));
+  if(inlineHere)return bookEditor(e);
   const attrs={class:'entry-card'+(editing?' editing':'')+(home||browse?' quiet':''),'data-entry':e.id};
   if(!home&&!browse&&!print&&!book)attrs.onclick=ev=>{
     if(ev.target.closest('button,a,input,textarea,.field'))return;
@@ -2549,12 +2567,12 @@ function entryCard(e,mode){
   const actions=print?null:h('div',{class:'entry-actions'},
     h('button',{type:'button',class:'entry-link',onclick:ev=>{
       ev.stopPropagation();
-      if(book){bookEditId=e.id;refreshBook()}
+      if(book||home)startInlineEdit(e.id);
       else editEntry(e);
     }},'Edit'),
     h('button',{type:'button',class:'entry-link',onclick:ev=>{
       ev.stopPropagation();
-      if(book)bookDelete(e);
+      if(book||home)bookDelete(e);
       else removeEntry(e.id);
     }},'Delete'));
   return h('article',attrs,
@@ -6325,12 +6343,28 @@ function allEntryWrap(piece){
     h('p',{class:'all-entry-sum'},piece.label),
     h('div',{class:'all-entry-body'},piece.node));
 }
+function chevronSvg(points,viewBox){
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('class','chevron');
+  svg.setAttribute('viewBox',viewBox);
+  svg.setAttribute('aria-hidden','true');
+  svg.setAttribute('focusable','false');
+  const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');
+  line.setAttribute('points',points);
+  line.setAttribute('fill','none');
+  line.setAttribute('stroke','currentColor');
+  line.setAttribute('stroke-width','5');
+  line.setAttribute('stroke-linecap','round');
+  line.setAttribute('stroke-linejoin','round');
+  svg.append(line);
+  return svg;
+}
 function allEntriesArrow(){
-  return h('button',{type:'button',class:'all-arrow'+(browseList?' up':''),id:'browseToggle','aria-label':'All entries','aria-expanded':browseList?'true':'false',onclick:()=>{
+  return h('button',{type:'button',class:'all-arrow card'+(browseList?' up':''),id:'browseToggle','aria-label':'All entries','aria-expanded':browseList?'true':'false',onclick:()=>{
     browseList=!browseList;
     if(browseList)browseClosed.clear();
     render();
-  }});
+  }},chevronSvg('12,12 60,36 108,12','0 0 120 48'));
 }
 function allEntriesBlock(rows,nodesFor,extra){
   const pieces=rows.flatMap(date=>piecesOf(date,nodesFor(date)));
@@ -7099,6 +7133,7 @@ function syncBookButtons(){
   if(next)next.disabled=!days.length||bookIndex>=days.length-1;
 }
 function openBook(){
+  if(bookEditId){saveBookEntry(bookEditId);bookEditId=null;render()}
   if(backupOpen)closeBackup();
   closePdf();
   const root=$('book');

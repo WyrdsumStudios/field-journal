@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=EB+Garamond:ital,wght@0,500;0,600;1,500&family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Pixelify+Sans:wght@400;500;600&family=Press+Start+2P&family=Special+Elite&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=22">
-<link rel="stylesheet" href="styles.css?v=30"></head>
+<link rel="stylesheet" href="styles.css?v=31"></head>
 <body>
 <button id="updateBanner" class="update-banner" type="button" hidden>Update ready, tap to refresh</button>
 <main class="wrap">
@@ -52,10 +52,10 @@
 <section id="goalScreen" class="cat-screen" hidden></section>
 </main>
 <nav id="dayNav" class="day-nav" aria-label="Change day">
-<button type="button" id="dayPrev" class="day-jump" aria-label="Previous day"></button>
-<button type="button" id="dayNext" class="day-jump" aria-label="Next day"></button>
+<button type="button" id="dayPrev" class="day-jump card" aria-label="Previous day"><svg class="chevron" viewBox="0 0 48 80" aria-hidden="true" focusable="false"><polyline points="34,8 12,40 34,72" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline></svg></button>
+<button type="button" id="dayNext" class="day-jump card" aria-label="Next day"><svg class="chevron" viewBox="0 0 48 80" aria-hidden="true" focusable="false"><polyline points="14,8 36,40 14,72" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline></svg></button>
 </nav>
-<div id="book" class="book" hidden>
+<div id="book" class="book book-plain" hidden>
 <button type="button" id="bookClose" class="book-close">Close</button>
 <div class="book-stage" id="bookStage">
 <div class="book-under" id="bookUnder"></div>
@@ -135,4 +135,4 @@
 <img id="lightboxImg" alt="Attached image">
 </div>
 <script src="vendor/leaflet/leaflet.js?v=22"></script>
-<script src="app.js?v=30"></script></body></html>
+<script src="app.js?v=31"></script></body></html>
