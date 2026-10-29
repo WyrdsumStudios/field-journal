@@ -466,6 +466,321 @@ function weatherFields(d){
     }}))
   ];
 }
+const SKETCH_PAPER='#f6f1e6';
+const SKETCH_INK='#2a261f';
+let sketchTool='pen',sketchRedo=[],sketchPenAt=0,sketchEpoch=0;
+const sketchPens=new Set();
+let sketchInk=null;
+function sketchRand(seed){
+  let a=seed>>>0;
+  return function(){
+    a=a+0x6D2B79F5|0;
+    let t=Math.imul(a^a>>>15,1|a);
+    t=t+Math.imul(t^t>>>7,61|t)^t;
+    return ((t^t>>>14)>>>0)/4294967296;
+  };
+}
+function sketchRadius(pressure,cssW){
+  const min=Math.max(0.7,cssW/980);
+  const max=Math.max(5.4,cssW/120);
+  const t=Math.pow(Math.min(1,Math.max(0,pressure)),0.62);
+  return min+(max-min)*t;
+}
+function sketchPressure(ev,canvas){
+  if(ev.pointerType==='pen'||ev.pointerType==='eraser'){
+    const p=Number(ev.pressure);
+    if(p>0&&p<=1)return p;
+    return 0.18;
+  }
+  const now=ev.timeStamp||Date.now();
+  const prev=canvas._sketchPace||{t:now,x:ev.clientX,y:ev.clientY};
+  const dt=Math.max(8,now-prev.t);
+  const speed=Math.hypot(ev.clientX-prev.x,ev.clientY-prev.y)/dt;
+  canvas._sketchPace={t:now,x:ev.clientX,y:ev.clientY};
+  return Math.max(0.24,Math.min(0.86,0.84-Math.min(0.6,speed*0.85)));
+}
+function sketchNorm(canvas,ev,pressure){
+  const r=canvas.getBoundingClientRect();
+  return {
+    x:Math.min(1,Math.max(0,(ev.clientX-r.left)/Math.max(1,r.width))),
+    y:Math.min(1,Math.max(0,(ev.clientY-r.top)/Math.max(1,r.height))),
+    p:Math.min(1,Math.max(0,pressure))
+  };
+}
+function sketchEraserEvent(ev){
+  return ev.pointerType==='eraser'||ev.button===5||!!(ev.buttons&32);
+}
+function drawSketchStroke(ctx,stroke,cssW,cssH){
+  const pts=stroke.points||[];
+  if(!pts.length)return;
+  const erase=stroke.tool==='erase';
+  const rand=sketchRand(stroke.seed>>>0);
+  ctx.save();
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+  if(erase)ctx.globalCompositeOperation='destination-out';
+  pts.forEach((pt,i)=>{
+    const x=pt.x*cssW,y=pt.y*cssH;
+    const rad=sketchRadius(pt.p,cssW)*(erase?2.15:1);
+    if(!erase){
+      for(let k=0;k<4;k++){
+        const ang=rand()*6.2831853;
+        const dist=rad*(0.28+rand()*0.42);
+        const rr=Math.max(0.28,rad*(0.08+rand()*0.2));
+        const a=0.1+rand()*0.2;
+        ctx.fillStyle='rgba(48,44,38,'+a.toFixed(3)+')';
+        ctx.beginPath();
+        ctx.arc(x+Math.cos(ang)*dist,y+Math.sin(ang)*dist,rr,0,Math.PI*2);
+        ctx.fill();
+      }
+      ctx.strokeStyle=SKETCH_INK;
+      ctx.fillStyle=SKETCH_INK;
+      ctx.globalAlpha=0.96;
+      if(i){
+        const prev=pts[i-1];
+        ctx.lineWidth=Math.max(0.7,(sketchRadius(prev.p,cssW)+rad)*0.34);
+        ctx.beginPath();
+        ctx.moveTo(prev.x*cssW,prev.y*cssH);
+        ctx.lineTo(x,y);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(x,y,Math.max(0.45,rad*0.36),0,Math.PI*2);
+      ctx.fill();
+      ctx.globalAlpha=1;
+    }else{
+      ctx.strokeStyle='#000';
+      ctx.fillStyle='#000';
+      if(i){
+        const prev=pts[i-1];
+        ctx.lineWidth=rad*2;
+        ctx.beginPath();
+        ctx.moveTo(prev.x*cssW,prev.y*cssH);
+        ctx.lineTo(x,y);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(x,y,rad,0,Math.PI*2);
+      ctx.fill();
+    }
+  });
+  ctx.restore();
+}
+function paintSketch(display,strokes){
+  if(!display)return;
+  const cssW=Math.max(1,display.clientWidth||display.width||1);
+  const cssH=Math.max(1,display.clientHeight||display.height||1);
+  const dpr=Math.min(window.devicePixelRatio||1,3);
+  const bw=Math.max(1,Math.round(cssW*dpr));
+  const bh=Math.max(1,Math.round(cssH*dpr));
+  if(display.width!==bw||display.height!==bh){display.width=bw;display.height=bh}
+  const ctx=display.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle=SKETCH_PAPER;
+  ctx.fillRect(0,0,cssW,cssH);
+  if(!sketchInk)sketchInk=document.createElement('canvas');
+  if(sketchInk.width!==bw||sketchInk.height!==bh){sketchInk.width=bw;sketchInk.height=bh}
+  const ictx=sketchInk.getContext('2d');
+  ictx.setTransform(dpr,0,0,dpr,0,0);
+  ictx.clearRect(0,0,cssW,cssH);
+  (strokes||[]).forEach(s=>drawSketchStroke(ictx,s,cssW,cssH));
+  ctx.drawImage(sketchInk,0,0,cssW,cssH);
+}
+function packSketch(strokes){
+  return JSON.stringify({v:1,strokes:(strokes||[]).map(s=>({
+    t:s.tool==='erase'?'e':'p',
+    s:s.seed>>>0,
+    p:(s.points||[]).map(pt=>[Math.round(pt.x*10000)/10000,Math.round(pt.y*10000)/10000,Math.round(pt.p*1000)/1000])
+  }))});
+}
+function unpackSketch(text){
+  let data;
+  try{data=JSON.parse(text)}catch(e){return []}
+  const list=data&&Array.isArray(data.strokes)?data.strokes:[];
+  return list.map(s=>{
+    const points=(Array.isArray(s.p)?s.p:[]).map(pt=>{
+      if(Array.isArray(pt))return {x:Number(pt[0])||0,y:Number(pt[1])||0,p:Number(pt[2])||0};
+      return {x:Number(pt.x)||0,y:Number(pt.y)||0,p:Number(pt.p)||0};
+    }).filter(pt=>pt.x>=0&&pt.x<=1&&pt.y>=0&&pt.y<=1);
+    return {tool:s.t==='e'?'erase':'pen',seed:Number(s.s)>>>0,points};
+  }).filter(s=>s.points.length);
+}
+async function loadSketchStrokes(id){
+  if(!id)return [];
+  let blob=await getImage(id);
+  if(!blob)blob=await fetchSyncImage(id);
+  if(!blob)return [];
+  return unpackSketch(await blob.text());
+}
+function syncSketchButtons(){
+  const undo=$('sketchUndo'),redo=$('sketchRedo'),clear=$('sketchClear');
+  const n=(draft.sketchStrokes||[]).length;
+  if(undo)undo.disabled=!n;
+  if(redo)redo.disabled=!sketchRedo.length;
+  if(clear)clear.disabled=!n;
+  const canvas=$('sketchCanvas');
+  if(canvas)canvas.dataset.strokes=String(n);
+}
+function sketchUndo(){
+  const list=draft.sketchStrokes;
+  if(!list||!list.length)return;
+  sketchRedo.push(list.pop());
+  const canvas=$('sketchCanvas');
+  if(canvas)paintSketch(canvas,list);
+  syncSketchButtons();
+}
+function sketchRedoStroke(){
+  if(!sketchRedo.length||!draft.sketchStrokes)return;
+  draft.sketchStrokes.push(sketchRedo.pop());
+  const canvas=$('sketchCanvas');
+  if(canvas)paintSketch(canvas,draft.sketchStrokes);
+  syncSketchButtons();
+}
+function sketchClear(){
+  if(!draft.sketchStrokes||!draft.sketchStrokes.length)return;
+  if(!confirm('Clear this sketch?'))return;
+  draft.sketchStrokes=[];
+  sketchRedo=[];
+  const canvas=$('sketchCanvas');
+  if(canvas)paintSketch(canvas,[]);
+  syncSketchButtons();
+}
+function sketchSetTool(tool){
+  sketchTool=tool==='erase'?'erase':'pen';
+  document.querySelectorAll('.sketch-tool').forEach(btn=>{
+    const on=btn.getAttribute('data-tool')===sketchTool;
+    btn.classList.toggle('on',on);
+    btn.setAttribute('aria-pressed',on?'true':'false');
+  });
+}
+function bindSketchCanvas(canvas){
+  canvas.addEventListener('contextmenu',ev=>ev.preventDefault());
+  canvas.addEventListener('selectstart',ev=>ev.preventDefault());
+  let drawing=null;
+  const finish=ev=>{
+    if(!drawing||drawing.id!==ev.pointerId)return;
+    if(ev.pointerType==='pen'||ev.pointerType==='eraser'){sketchPens.delete(ev.pointerId);sketchPenAt=Date.now()}
+    if(drawing.points.length){
+      draft.sketchStrokes=draft.sketchStrokes||[];
+      draft.sketchStrokes.push({tool:drawing.tool,seed:drawing.seed,points:drawing.points});
+      sketchRedo=[];
+    }
+    drawing=null;
+    syncSketchButtons();
+  };
+  canvas.addEventListener('pointerdown',ev=>{
+    if(ev.pointerType==='touch'&&(sketchPens.size||Date.now()-sketchPenAt<650)){ev.preventDefault();return}
+    if(ev.pointerType==='mouse'&&ev.button!==0)return;
+    if(ev.pointerType==='pen'||ev.pointerType==='eraser'){
+      sketchPens.add(ev.pointerId);
+      sketchPenAt=Date.now();
+      if(drawing&&drawing.pointerType==='touch')drawing=null;
+    }
+    ev.preventDefault();
+    if(canvas.setPointerCapture){try{canvas.setPointerCapture(ev.pointerId)}catch(err){}}
+    canvas._sketchPace=null;
+    const tool=sketchEraserEvent(ev)||sketchTool==='erase'?'erase':'pen';
+    const pt=sketchNorm(canvas,ev,sketchPressure(ev,canvas));
+    drawing={id:ev.pointerId,pointerType:ev.pointerType,tool,seed:(Math.random()*0x7fffffff)|0,points:[pt]};
+    paintSketch(canvas,(draft.sketchStrokes||[]).concat([{tool,seed:drawing.seed,points:drawing.points}]));
+  });
+  canvas.addEventListener('pointermove',ev=>{
+    if(!drawing||drawing.id!==ev.pointerId)return;
+    ev.preventDefault();
+    let batch=[ev];
+    try{if(typeof ev.getCoalescedEvents==='function'){const list=ev.getCoalescedEvents();if(list&&list.length)batch=list}}catch(err){}
+    batch.forEach(sample=>{
+      const pt=sketchNorm(canvas,sample,sketchPressure(sample,canvas));
+      const last=drawing.points[drawing.points.length-1];
+      if(last&&Math.abs(last.x-pt.x)<0.0004&&Math.abs(last.y-pt.y)<0.0004)return;
+      drawing.points.push(pt);
+    });
+    paintSketch(canvas,(draft.sketchStrokes||[]).concat([{tool:drawing.tool,seed:drawing.seed,points:drawing.points}]));
+  });
+  canvas.addEventListener('pointerup',finish);
+  canvas.addEventListener('pointercancel',ev=>{
+    if(ev.pointerType==='pen'||ev.pointerType==='eraser'){sketchPens.delete(ev.pointerId);sketchPenAt=Date.now()}
+    if(drawing&&drawing.id===ev.pointerId)drawing=null;
+  });
+}
+function sketchStage(){
+  const canvas=document.createElement('canvas');
+  canvas.className='sketch-canvas';
+  canvas.id='sketchCanvas';
+  canvas.setAttribute('aria-label','Sketch');
+  bindSketchCanvas(canvas);
+  const tool=(id,label)=>h('button',{type:'button',class:'btn ghost sketch-tool'+(sketchTool===id?' on':''),'data-tool':id,'aria-pressed':sketchTool===id?'true':'false',onclick:()=>sketchSetTool(id)},label);
+  return h('div',{class:'sketch-stage',id:'sketchStage'},
+    h('div',{class:'sketch-tools',id:'sketchTools'},
+      tool('pen','Pen'),
+      tool('erase','Eraser'),
+      h('button',{type:'button',class:'btn ghost',id:'sketchUndo',onclick:sketchUndo},'Undo'),
+      h('button',{type:'button',class:'btn ghost',id:'sketchRedo',onclick:sketchRedoStroke},'Redo'),
+      h('button',{type:'button',class:'btn ghost',id:'sketchClear',onclick:sketchClear},'Clear')),
+    canvas);
+}
+function sketchThumb(e){
+  if(e&&e.sketchThumb)return h('img',{class:'sketch-thumb',alt:'Sketch','data-src-id':e.sketchThumb});
+  return h('p',{class:'muted sm sketch-empty'},'No sketch yet.');
+}
+async function mountSketch(){
+  const canvas=$('sketchCanvas');
+  if(!canvas)return;
+  const epoch=++sketchEpoch;
+  const paint=()=>paintSketch(canvas,draft.sketchStrokes||[]);
+  if(!canvas._sketchObserved&&window.ResizeObserver){
+    canvas._sketchObserved=true;
+    const obs=new ResizeObserver(()=>{if(canvas.isConnected)paintSketch(canvas,draft.sketchStrokes||[])});
+    obs.observe(canvas);
+  }
+  if(draft.sketchStrokes==null){
+    draft.sketchStrokes=[];
+    paint();
+    if(draft.sketchId){
+      const loaded=await loadSketchStrokes(draft.sketchId);
+      if(epoch!==sketchEpoch)return;
+      if(!(draft.sketchStrokes||[]).length)draft.sketchStrokes=loaded;
+    }
+  }
+  paint();
+  syncSketchButtons();
+}
+async function renderSketchBlob(strokes,cssW,cssH){
+  const w=Math.max(320,Math.round(cssW||960));
+  const h=Math.max(220,Math.round(cssH||Math.round(w*0.68)));
+  const canvas=document.createElement('canvas');
+  canvas.style.cssText='position:absolute;left:-12000px;top:0;width:'+w+'px;height:'+h+'px';
+  document.body.appendChild(canvas);
+  try{
+    paintSketch(canvas,strokes);
+    return await blobFromCanvas(canvas);
+  }finally{
+    canvas.remove();
+  }
+}
+async function persistSketch(entry){
+  if(!draft||draft.sketchStrokes==null)return;
+  const strokes=draft.sketchStrokes;
+  const prev=[entry.sketchId,entry.sketchThumb].filter(Boolean);
+  if(!strokes.length){
+    entry.sketchId='';
+    entry.sketchThumb='';
+    draft.sketchId='';
+    draft.sketchThumb='';
+    forgetImages(prev);
+    return;
+  }
+  const id=uid(),thumb=uid();
+  await putImage(id,new Blob([packSketch(strokes)],{type:'application/json'}));
+  const live=$('sketchCanvas');
+  const blob=await renderSketchBlob(strokes,live&&live.clientWidth,live&&live.clientHeight);
+  await putImage(thumb,blob);
+  entry.sketchId=id;
+  entry.sketchThumb=thumb;
+  draft.sketchId=id;
+  draft.sketchThumb=thumb;
+  forgetImages(prev.filter(x=>x!==id&&x!==thumb));
+}
 const TYPES={
   notes:{
     id:'notes',
@@ -761,6 +1076,33 @@ const TYPES={
     cardBits(e){
       const cat=catById(e.categoryId);
       return [...skyReadout(e,cat,!printing||bookOpen),shownNote(e.note),tagLine(e.tags),imageGrid(e.images)];
+    }
+  },
+  sketch:{
+    id:'sketch',
+    label:'Sketch',
+    tagLabel:'Tags you are watching',
+    blank(){return {title:'',note:'',tags:[],images:[],sketchId:'',sketchThumb:'',sketchStrokes:[]}},
+    fromEntry(e){return {title:e.title||'',note:e.note||'',tags:[...(e.tags||[])],images:[...(e.images||[])],sketchId:typeof e.sketchId==='string'?e.sketchId:'',sketchThumb:typeof e.sketchThumb==='string'?e.sketchThumb:'',sketchStrokes:null}},
+    hasContent(d){return !!((d.title||'').trim()||noteHasBody(d.note)||(d.tags||[]).length||(d.sketchStrokes&&d.sketchStrokes.length)||d.sketchId)},
+    write(entry,d){
+      entry.title=(d.title||'').trim();
+      entry.note=noteKeep(d.note);
+      entry.tags=[...d.tags];
+      entry.images=[...(d.images||[])];
+      entry.sketchId=d.sketchId||'';
+      entry.sketchThumb=d.sketchThumb||'';
+    },
+    fields(){
+      return [
+        sketchStage(),
+        h('label',{class:'lbl'},'Title',h('input',{id:'entryTitle',class:'field',value:draft.title||'',autocomplete:'off'})),
+        h('label',{class:'lbl'},'Note',noteBox({id:'entryNote','aria-label':'Note'}))
+      ];
+    },
+    tail(){return null},
+    cardBits(e){
+      return [sketchThumb(e),shownNote(e.note),tagLine(e.tags)];
     }
   }
 };
@@ -1971,8 +2313,15 @@ function currentCat(){return catById(openCat)}
 function dayEntries(date,categoryId){
   return state.entries.filter(e=>e.date===date&&e.categoryId===categoryId).slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
 }
+function entryBlobIds(e){
+  const ids=[...(e&&e.images||[])];
+  if(e&&e.sketchId)ids.push(e.sketchId);
+  if(e&&e.sketchThumb)ids.push(e.sketchThumb);
+  return ids;
+}
 function freshDraft(cat){
   draft=typeOf(cat).blank(cat);
+  sketchRedo=[];
   pendingTag='';
   imageError='';
   tempTouched=false;
@@ -2361,11 +2710,13 @@ function editEntry(e){
   focusTitle=true;
   imageError='';
   skipFormRead=true;
+  sketchRedo=[];
+  sketchTool='pen';
   render();
 }
 function removeEntry(id){
   const e=state.entries.find(x=>x.id===id);
-  const ids=[...(e&&e.images||[])];
+  const ids=entryBlobIds(e);
   state.entries=state.entries.filter(x=>x.id!==id);
   if(editingId===id){
     ids.push(...sessionNew);
@@ -2435,6 +2786,7 @@ function bookEditor(e){
   const kind=typeOf(catById(e.categoryId)).id;
   const fields=[];
   if(kind==='sky')fields.push(...skyReadout(e,catById(e.categoryId),true));
+  if(kind==='sketch')fields.push(sketchThumb(e));
   fields.push(h('label',{class:'lbl'},'Title',h('input',{class:'field','data-book-title':'1',value:e.title||'','aria-label':'Title',autocomplete:'off',onblur:()=>saveBookEntry(e.id)})));
   if(kind==='timer'){
     const sections=Array.isArray(e.sections)&&e.sections.length?e.sections:[{id:'notes',name:'Notes',text:e.note||''}];
@@ -2453,7 +2805,7 @@ function bookEditor(e){
 function deleteCategory(c){
   const noun=c.type==='relationships'?'people':c.type==='record'?'records':c.type==='walk'?'walks':c.type==='todo'?'to-dos':'entries';
   if(!confirm(`Delete category "${c.name}" and its ${noun}?`))return;
-  const ids=state.entries.filter(e=>e.categoryId===c.id).flatMap(e=>e.images||[]);
+  const ids=state.entries.filter(e=>e.categoryId===c.id).flatMap(entryBlobIds);
   (c.people||[]).forEach(p=>{
     if(p.photoId)ids.push(p.photoId);
     (p.notes||[]).forEach(n=>(n.images||[]).forEach(id=>ids.push(id)));
@@ -2519,14 +2871,15 @@ function commitRename(oldName,raw){
   draft.tags=rewrite(draft.tags);
   save();render();
 }
-function saveEntry(ev){
+async function saveEntry(ev){
   if(ev)ev.preventDefault();
   readDraft();
   const cat=currentCat();
   if(!cat)return;
   const type=typeOf(cat);
+  if(type.id==='sketch'&&draft.sketchStrokes==null)await mountSketch();
   if(!type.hasContent(draft))return;
-  const prev=editingId?[...((state.entries.find(x=>x.id===editingId)||{}).images||[])]:[];
+  const prev=editingId?entryBlobIds(state.entries.find(x=>x.id===editingId)):[];
   let entry;
   if(editingId){
     entry=state.entries.find(x=>x.id===editingId);
@@ -2536,7 +2889,8 @@ function saveEntry(ev){
     state.entries.push(entry);
   }
   type.write(entry,draft);
-  const keep=new Set(entry.images||[]);
+  if(type.id==='sketch')await persistSketch(entry);
+  const keep=new Set([...(entry.images||[]),entry.sketchId,entry.sketchThumb].filter(Boolean));
   const dropped=prev.filter(id=>!keep.has(id));
   sessionNew.clear();
   editingId=null;
@@ -2621,7 +2975,7 @@ function entryCard(e,mode){
   const inlineHere=bookEditId===e.id&&((book&&bookOpen)||(home&&!bookOpen));
   if(inlineHere)return bookEditor(e);
   const attrs={class:'entry-card'+(editing?' editing':'')+(home||browse?' quiet':''),'data-entry':e.id};
-    if(!home&&!browse&&!print&&!book)attrs.onclick=ev=>{
+    if(!home&&!browse&&!print&&!book&&type.id!=='sketch')attrs.onclick=ev=>{
     if(ev.target.closest('button,a,input,textarea,.field,.sky-chart'))return;
     editEntry(e);
   };
@@ -6483,7 +6837,7 @@ function renderCatScreen(){
     editingId?h('p',{class:'muted sm editing-flag'},'Editing entry'):null,
     ...type.fields(draft),
     ...writing,
-    imageSection(),
+    type.id==='sketch'?null:imageSection(),
     h('div',{class:'actions'},
       h('button',{class:'btn',type:'submit',id:'saveEntry'},'Save entry'),
       editingId?h('button',{type:'button',class:'btn ghost',id:'cancelEdit',onclick:()=>{
@@ -6511,6 +6865,7 @@ function renderCatScreen(){
     type.id==='tracker'?null:categoryBrowser(cat));
   fillAreas();
   if(type.id==='sky')paintSkySearch();
+  if(type.id==='sketch')mountSketch();
   if(focusTitle){
     const el=(type.id==='tracker'&&!editingId)?null:($('entryTitle')||(!cat.place&&$('placeQuery')));
     if(el){el.focus();const n=el.value.length;if(el.setSelectionRange)el.setSelectionRange(n,n)}
@@ -6526,6 +6881,12 @@ function entryPreview(e){
     return h('div',{class:'preview-block'},
       h('p',{class:'preview-title'},labelOr(e.title,'Sky')),
       status?h('p',{class:'muted sm'},status):null,
+      e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
+  }
+  if(kind==='sketch'){
+    return h('div',{class:'preview-block'},
+      sketchThumb(e),
+      h('p',{class:'preview-title'},labelOr(e.title,'Sketch')),
       e.tags&&e.tags.length?h('p',{class:'accent sm preview-tags'},e.tags.join(' · ')):null);
   }
   if(kind==='weather'){
@@ -8357,7 +8718,11 @@ function stampMissing(s){
 function collectImageIds(s){
   const ids=new Set();
   const add=id=>{if(id)ids.add(String(id))};
-  (s.entries||[]).forEach(e=>(e.images||[]).forEach(add));
+  (s.entries||[]).forEach(e=>{
+    (e.images||[]).forEach(add);
+    add(e.sketchId);
+    add(e.sketchThumb);
+  });
   (s.goals||[]).forEach(g=>(g.entries||[]).forEach(e=>(e.images||[]).forEach(add)));
   (s.categories||[]).forEach(c=>{
     if(!c)return;
@@ -8782,7 +9147,7 @@ function noteEdits(){
     if(numAt(c.updatedAt)>numAt(state.gone.category[c.id]))unbury('category',c.id);
   });
   (prev.categories||[]).forEach(c=>{if(c&&c.id&&!seen.has(c.id))buryCategory(c,ts)});
-  diffChildren(prev.entries,state.entries,'entry','',ts,e=>JSON.stringify({categoryId:e.categoryId,date:e.date,title:e.title,note:e.note,tags:e.tags,images:e.images,sections:e.sections,timerStart:e.timerStart,timerEnd:e.timerEnd,durationMinutes:e.durationMinutes,condition:e.condition,temperature:e.temperature,dreams:e.dreams,sky:e.sky}));
+  diffChildren(prev.entries,state.entries,'entry','',ts,e=>JSON.stringify({categoryId:e.categoryId,date:e.date,title:e.title,note:e.note,tags:e.tags,images:e.images,sections:e.sections,timerStart:e.timerStart,timerEnd:e.timerEnd,durationMinutes:e.durationMinutes,condition:e.condition,temperature:e.temperature,dreams:e.dreams,sky:e.sky,sketchId:e.sketchId,sketchThumb:e.sketchThumb}));
   diffGoals(prev,state,ts);
   diffChildren(prev.themes,state.themes,'theme','',ts,t=>JSON.stringify({name:t.name,skin:t.skin}));
   diffChildren(prev.borders,state.borders,'border','',ts,b=>JSON.stringify({sourceId:b.sourceId,frameId:b.frameId,thickness:b.thickness,fit:b.fit,orientation:b.orientation,tint:b.tint||'',opacity:b.opacity,slice:b.slice}));
