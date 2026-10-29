@@ -1406,9 +1406,9 @@ function load(){
           c.todos=nextTodos;
         }
         if(c.type==='tracker'){
-          const before=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt});
+          const before=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt,periods:c.periods});
           normalizeTracker(c);
-          const after=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt});
+          const after=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt,periods:c.periods});
           if(before!==after)migrated=true;
         }
         if(c.type==='relationships'){
@@ -1529,7 +1529,7 @@ function load(){
   stampMissing(blank);
   return blank;
 }
-const GONE_KINDS=['category','entry','goal','goalItem','goalEntry','goalCheck','list','listItem','meal','mealItem','todo','todoItem','shift','flowLog','flowOption','dayTitle','theme','border','image','group','person','relSection','relNote','record','walk'];
+const GONE_KINDS=['category','entry','goal','goalItem','goalEntry','goalCheck','list','listItem','meal','mealItem','todo','todoItem','shift','flowLog','flowOption','period','dayTitle','theme','border','image','group','person','relSection','relNote','record','walk'];
 let dbPromise=null;
 let state=load();
 applyAppearance();
@@ -3952,6 +3952,7 @@ function normalizeTracker(c){
   c.flow=normalizeFlowLogs(c.flow,new Set(options.map(o=>o.id)));
   c.periodMarks=normalizePeriodMarks(c.periodMarks);
   c.periodMarkAt=normalizePeriodMarkAt(c.periodMarkAt);
+  c.periods=normalizePeriods(c.periods,c);
   if(wasPeriod)c.showCycle=true;
   else if(c.showCycle!==true)c.showCycle=false;
 }
@@ -4046,6 +4047,7 @@ function trackerDateKeys(){
     if(c.tracker==='flow'){
       const marks=c.periodMarks&&typeof c.periodMarks==='object'?c.periodMarks:{};
       Object.keys(marks).forEach(k=>{if((marks[k]===true||marks[k]===false)&&/^\d{4}-\d{2}-\d{2}$/.test(k))dates.push(k)});
+      periodDays(c).forEach(k=>dates.push(k));
     }
   });
   return dates;
@@ -4407,10 +4409,180 @@ function setShowCycle(on){
   save();
   render();
 }
+function isDateKey(k){return /^\d{4}-\d{2}-\d{2}$/.test(String(k||''))}
+function ensurePeriods(cat){
+  if(!Array.isArray(cat.periods))cat.periods=[];
+  return cat.periods;
+}
+function periodEndShown(p){
+  if(!p||!isDateKey(p.start))return '';
+  if(isDateKey(p.end))return p.end;
+  const today=key(new Date());
+  return today>=p.start?today:p.start;
+}
+function eachPeriodDay(p,fn){
+  const end=periodEndShown(p);
+  if(!end||end<p.start)return;
+  let d=p.start,n=0;
+  while(d<=end&&n<5000){fn(d);d=shiftDate(d,1);n++}
+}
+function periodDays(cat){
+  const set=new Set();
+  (cat&&cat.periods||[]).forEach(p=>{if(p&&isDateKey(p.start))eachPeriodDay(p,d=>set.add(d))});
+  return set;
+}
+function openPeriod(cat){
+  return (cat&&cat.periods||[]).find(p=>p&&isDateKey(p.start)&&!isDateKey(p.end))||null;
+}
+function periodCovering(cat,date){
+  return (cat&&cat.periods||[]).find(p=>{
+    if(!p||!isDateKey(p.start)||date<p.start)return false;
+    return date<=periodEndShown(p);
+  })||null;
+}
+function periodsOverlap(cat,start,end,ignoreId){
+  const e=end||'9999-12-31';
+  return (cat.periods||[]).some(p=>{
+    if(!p||p.id===ignoreId||!isDateKey(p.start))return false;
+    const pe=isDateKey(p.end)?p.end:'9999-12-31';
+    return p.start<=e&&start<=pe;
+  });
+}
+function periodsFromHistory(cat){
+  const dates=[];
+  const keys=new Set([...Object.keys(cat.flow||{}),...Object.keys(cat.periodMarks||{})]);
+  [...keys].filter(isDateKey).sort().forEach(k=>{if(dayCountsAsPeriod(cat,k))dates.push(k)});
+  const groups=[];
+  dates.forEach(k=>{
+    if(!groups.length){groups.push([k]);return}
+    const prev=groups[groups.length-1];
+    if(shiftDate(prev[prev.length-1],1)===k)prev.push(k);
+    else groups.push([k]);
+  });
+  const today=key(new Date());
+  return groups.map(days=>{
+    const start=days[0],last=days[days.length-1];
+    return {id:uid(),start,end:last===today?null:last};
+  });
+}
+function normalizePeriods(raw,cat){
+  const source=Array.isArray(raw)?raw:periodsFromHistory(cat||{});
+  return source.filter(p=>p&&typeof p==='object').map(p=>{
+    const start=isDateKey(p.start)?p.start:'';
+    let end=p.end==null||p.end===''?null:(isDateKey(p.end)?p.end:null);
+    if(!start)return null;
+    if(end&&end<start)end=start;
+    const at=Number(p.updatedAt);
+    return {id:typeof p.id==='string'&&p.id?p.id:uid(),start,end,updatedAt:Number.isFinite(at)?at:0};
+  }).filter(Boolean);
+}
+function startPeriod(cat,date){
+  if(!cat||!isDateKey(date)||cat.tracker==='shifts')return;
+  if(periodCovering(cat,date)||openPeriod(cat)||periodsOverlap(cat,date,null))return;
+  ensurePeriods(cat).push({id:uid(),start:date,end:null});
+  save();
+  render();
+}
+function endPeriod(cat,date){
+  const open=openPeriod(cat);
+  if(!open)return;
+  const end=isDateKey(date)&&date>=open.start?date:periodEndShown(open);
+  if(!end||end<open.start)return;
+  open.end=end;
+  save();
+  render();
+}
+function deletePeriod(cat,id){
+  if(!cat)return;
+  cat.periods=(cat.periods||[]).filter(p=>p.id!==id);
+  save();
+  render();
+}
+function movePeriodEdge(cat,id,date,edge){
+  const p=(cat&&cat.periods||[]).find(x=>x.id===id);
+  if(!p||!isDateKey(date))return;
+  if(edge==='start'){
+    const end=isDateKey(p.end)?p.end:null;
+    if(end&&date>end)return;
+    if(periodsOverlap(cat,date,end,id))return;
+    p.start=date;
+  }else{
+    if(date<p.start)return;
+    if(periodsOverlap(cat,p.start,date,id))return;
+    p.end=date;
+  }
+  save();
+  render();
+}
+function periodForecast(cat){
+  const list=(cat&&cat.periods||[]).filter(p=>p&&isDateKey(p.start)).slice().sort((a,b)=>a.start.localeCompare(b.start));
+  const completed=list.filter(p=>isDateKey(p.end)&&p.end>=p.start);
+  if(!completed.length)return null;
+  const gaps=[];
+  for(let i=1;i<list.length;i++){
+    const n=daySpan(list[i-1].start,list[i].start);
+    if(n>0)gaps.push(n);
+  }
+  const recent=gaps.slice(-6);
+  const assumed=!recent.length;
+  const cycle=assumed?28:Math.round(recent.reduce((a,b)=>a+b,0)/recent.length);
+  const lens=completed.slice(-6).map(p=>daySpan(p.start,p.end)+1);
+  const length=Math.max(1,Math.round(lens.reduce((a,b)=>a+b,0)/lens.length));
+  const next=shiftDate(list[list.length-1].start,cycle);
+  const today=key(new Date());
+  const daysUntil=daySpan(today,next);
+  const logged=periodDays(cat);
+  const days=[];
+  let d=next;
+  for(let i=0;i<length;i++){
+    if(!logged.has(d))days.push(d);
+    d=shiftDate(d,1);
+  }
+  return {next,daysUntil,cycle,length,assumed,days};
+}
+function forecastText(cat){
+  const f=periodForecast(cat);
+  if(!f)return '';
+  const when=parse(f.next);
+  const sameYear=when.getFullYear()===new Date().getFullYear();
+  const label=when.toLocaleDateString('en-US',sameYear?{month:'short',day:'numeric'}:{month:'short',day:'numeric',year:'numeric'});
+  const rel=f.daysUntil===0?'today':f.daysUntil>0?`in ${f.daysUntil} day${f.daysUntil===1?'':'s'}`:`${-f.daysUntil} day${f.daysUntil===-1?'':'s'} ago`;
+  const basis=f.assumed?' This is an estimate, using a 28-day cycle until another one is logged.':' This is an estimate.';
+  return `Next period expected around ${label} (${rel}).${basis}`;
+}
+function periodCard(cat,date,home){
+  const open=openPeriod(cat);
+  const cover=periodCovering(cat,date);
+  const kids=[];
+  if(cover){
+    const n=daySpan(cover.start,date)+1;
+    const total=isDateKey(cover.end)?daySpan(cover.start,cover.end)+1:0;
+    kids.push(h('p',{class:'period-status'},total?`Period • Day ${n} of ${total}`:`Period • Day ${n}`));
+    if(!isDateKey(cover.end))kids.push(h('button',{type:'button',class:'btn period-end',onclick:ev=>{ev.stopPropagation();endPeriod(cat,date)}},'Period ended'));
+    kids.push(h('p',{class:'muted sm period-range'},isDateKey(cover.end)?`Started ${shortDate(cover.start)} · Ended ${shortDate(cover.end)}`:`Started ${shortDate(cover.start)}`));
+    kids.push(h('div',{class:'period-edit'},
+      h('button',{type:'button',class:'btn ghost',onclick:ev=>{ev.stopPropagation();movePeriodEdge(cat,cover.id,date,'start')}},'Set start to this day'),
+      h('button',{type:'button',class:'btn ghost',onclick:ev=>{ev.stopPropagation();movePeriodEdge(cat,cover.id,date,'end')}},'Set end to this day'),
+      h('button',{type:'button',class:'btn ghost',onclick:ev=>{ev.stopPropagation();deletePeriod(cat,cover.id)}},'Delete period')));
+  }else if(open){
+    const today=key(new Date());
+    const n=daySpan(open.start,today>=open.start?today:open.start)+1;
+    kids.push(h('p',{class:'period-status'},`Period • Day ${n}`));
+    kids.push(h('button',{type:'button',class:'btn period-end',onclick:ev=>{ev.stopPropagation();endPeriod(cat,today)}},'Period ended'));
+    kids.push(h('p',{class:'muted sm period-range'},`Started ${shortDate(open.start)}`));
+  }else{
+    kids.push(h('button',{type:'button',class:'btn period-start',onclick:ev=>{ev.stopPropagation();startPeriod(cat,date)}},'Period started'));
+  }
+  const line=forecastText(cat);
+  if(line)kids.push(h('p',{class:'muted sm period-forecast'},line));
+  return h('div',{class:'period-card'+(home?' period-home':' card'),id:home?false:'periodCard'},...kids);
+}
 function trackCalendar(cat){
   const flow=cat.tracker==='flow';
-  const stats=flow&&cat.showCycle?cycleStats(cat,sel):null;
   const today=key(new Date());
+  const logged=flow?periodDays(cat):null;
+  const forecast=flow?periodForecast(cat):null;
+  const predicted=new Set(forecast?forecast.days:[]);
   const y=view.getFullYear(),m=view.getMonth(),first=new Date(y,m,1).getDay(),n=new Date(y,m+1,0).getDate();
   const cells=['S','M','T','W','T','F','S'].map(d=>h('div',{class:'dow'},d));
   for(let i=0;i<first;i++)cells.push(h('div'));
@@ -4420,20 +4592,24 @@ function trackCalendar(cat){
     const hours=mins?formatHours(mins):'';
     const icons=flow?flowCalendarIcons(cat,k):null;
     const names=flow?flowSummary(cat,k).map(g=>(g.option.name||'Flow')+(g.count>1?` ×${g.count}`:'')).join(', '):'';
-    const predict=!!(stats&&stats.predict===k);
-    const bits=[hours,names,predict?'predicted':''].filter(Boolean);
+    const onPeriod=!!(logged&&logged.has(k));
+    const onForecast=!!(predicted.has(k)&&!onPeriod);
+    const bits=[hours,names,onPeriod?'period':onForecast?'predicted period':''] .filter(Boolean);
     cells.push(h('button',{
       type:'button','data-day':k,
       'data-hours':hours,
       'data-flow':names,
-      'data-predict':predict?'true':'false',
-      class:['track-day',k===sel&&'sel',k===today&&'today',predict&&'predict'].filter(Boolean).join(' '),
+      'data-period':onPeriod?'true':'false',
+      'data-forecast':onForecast?'true':'false',
+      class:['track-day',k===sel&&'sel',k===today&&'today',onPeriod&&'period',onForecast&&'forecast'].filter(Boolean).join(' '),
       'aria-label':[fmt(k),...bits].join(', '),
       onclick:()=>select(k)
     },
       h('span',{class:'track-num'},String(d)),
       !flow&&hours?h('span',{class:'track-mark','aria-hidden':'true'}):null,
       !flow&&hours?h('span',{class:'track-hrs'},hours):null,
+      onPeriod?h('span',{class:'period-dot','aria-hidden':'true'}):null,
+      onForecast?h('span',{class:'forecast-dot','aria-hidden':'true'}):null,
       icons));
   }
   const weeks=cat.tracker==='shifts'?h('div',{class:'track-weeks',id:'weekTotals'},
@@ -4485,8 +4661,7 @@ function periodOverrideRow(cat,date){
     h('label',{class:'period-toggle'},
       h('input',{type:'checkbox',id:'periodStarted',checked:started,'aria-label':'Period started',onchange:ev=>{
         if(ev.target.checked)setPeriodMark(date,true);
-        else if(mark===true)setPeriodMark(date,null);
-        else setPeriodMark(date,false);
+        else setPeriodMark(date,null);
       }}),
       'Period started'),
     h('label',{class:'period-toggle'},
@@ -4600,13 +4775,15 @@ function flowPanel(cat){
         'Show cycle stats')));
 }
 function trackBoard(cat){
-  return [trackCalendar(cat),trackerEntries(cat),cat.tracker==='flow'?flowPanel(cat):shiftPanel(cat)];
+  const flow=cat.tracker==='flow';
+  return [flow?periodCard(cat,sel,false):null,trackCalendar(cat),trackerEntries(cat),flow?flowPanel(cat):shiftPanel(cat)];
 }
 function trackerHomeBits(cat){
   if(cat.tracker==='flow'){
     const line=flowDayLine(cat,sel);
     const stats=cat.showCycle?cycleStats(cat,sel):null;
     return [
+      periodCard(cat,sel,true),
       line,
       stats&&stats.cycleDay!=null?h('p',{class:'muted sm cycle-day','data-cycle-day':String(stats.cycleDay)},`Cycle day ${stats.cycleDay}`):null
     ].filter(Boolean);
@@ -4622,10 +4799,12 @@ function trackerReview(cat,date){
   if(cat.tracker==='flow'){
     const line=flowDayLine(cat,date);
     const mark=periodMark(cat,date);
-    if(!line&&mark===null)return null;
+    const cover=periodCovering(cat,date);
+    if(!line&&mark===null&&!cover)return null;
     const stats=cat.showCycle?cycleStats(cat,date):null;
     const markText=mark===true?'Period started':mark===false?'Not a start':'';
     return h('div',{class:'day-track','data-track':date},
+      cover?h('p',{class:'period-status'},`Period • Day ${daySpan(cover.start,date)+1}`):null,
       line,
       !line&&markText?h('p',{class:'muted sm period-mark-line'},markText):null,
       stats&&stats.cycleDay!=null?h('p',{class:'muted sm cycle-day','data-cycle-day':String(stats.cycleDay)},`Cycle day ${stats.cycleDay}`):null);
@@ -7323,6 +7502,7 @@ function categoryDates(cat){
       const mark=cat.periodMarks[d];
       if((mark===true||mark===false)&&/^\d{4}-\d{2}-\d{2}$/.test(d))set.add(d);
     });
+    if(cat.tracker==='flow')periodDays(cat).forEach(d=>set.add(d));
   }
   if(cat.type==='relationships')(cat.people||[]).forEach(p=>(p.notes||[]).forEach(n=>{if(n&&/^\d{4}-\d{2}-\d{2}$/.test(n.date||''))set.add(n.date)}));
   if(cat.type==='record')(cat.records||[]).forEach(r=>{const d=recordCreatedKey(r);if(d)set.add(d)});
@@ -7547,7 +7727,7 @@ function categoryDayCount(cat,date){
   if(cat.type==='tracker'){
     if(cat.tracker==='flow'){
       const logs=flowLogCount(cat,date);
-      n+=logs||(periodMark(cat,date)!==null?1:0);
+      n+=logs||(periodMark(cat,date)!==null?1:0)||(periodDays(cat).has(date)?1:0);
     }else n+=shiftsOn(cat,date).length;
   }
   if(cat.type==='relationships')n+=relNotesOn(cat,date).length;
@@ -7892,7 +8072,7 @@ function renderCats(){
       if(type==='weather')cat.place=null;
       if(type==='list'){cat.lists=[];cat.meals={};}
       if(type==='todo')cat.todos=[];
-      if(type==='tracker'){cat.tracker=newTracker==='flow'?'flow':'shifts';cat.shifts={};cat.flow={};cat.flowOptions=[];cat.showCycle=false;if(cat.tracker==='flow'){cat.periodMarks={};cat.periodMarkAt={}}}
+      if(type==='tracker'){cat.tracker=newTracker==='flow'?'flow':'shifts';cat.shifts={};cat.flow={};cat.flowOptions=[];cat.showCycle=false;if(cat.tracker==='flow'){cat.periodMarks={};cat.periodMarkAt={};cat.periods=[]}}
       if(type==='relationships'){cat.groups=[{id:uid(),name:'Friends'}];cat.people=[];}
       if(type==='record')cat.records=[];
       if(type==='walk'){cat.walks=[];cat.walkUnit='km';}
@@ -8654,6 +8834,8 @@ function stampMissing(s){
       if(!c.periodMarks||typeof c.periodMarks!=='object'||Array.isArray(c.periodMarks)){c.periodMarks={};changed=true}
       if(!c.periodMarkAt||typeof c.periodMarkAt!=='object'||Array.isArray(c.periodMarkAt)){c.periodMarkAt={};changed=true}
       Object.keys(c.periodMarks).forEach(date=>{if(!Number.isFinite(Number(c.periodMarkAt[date]))){c.periodMarkAt[date]=1;changed=true}});
+      if(!Array.isArray(c.periods)){c.periods=[];changed=true}
+      (c.periods||[]).forEach(p=>{if(atLeast(p,1))changed=true});
     }
     (c.lists||[]).forEach(list=>{
       if(atLeast(list,1))changed=true;
@@ -8773,6 +8955,7 @@ function buryCategory(c,ts){
   }));
   Object.keys(c.shifts||{}).forEach(date=>(c.shifts[date]||[]).forEach(sh=>bury('shift',c.id+'/'+date+'/'+sh.id,ts)));
   (c.flowOptions||[]).forEach(opt=>bury('flowOption',c.id+'/'+opt.id,ts));
+  (c.periods||[]).forEach(p=>p&&p.id&&bury('period',c.id+'/'+p.id,ts));
   Object.keys(c.flow||{}).forEach(date=>{
     const logs=c.flow[date];
     if(Array.isArray(logs))logs.forEach(log=>log&&log.id&&bury('flowLog',c.id+'/'+date+'/'+log.id,ts));
@@ -8893,6 +9076,8 @@ function diffFlow(prev,next,ts){
   if(idOrder(prev.flowOptions)!==idOrder(next.flowOptions)){next.flowOptionOrderAt=ts;syncDirty=true}
   diffChildren(prev.flowOptions,next.flowOptions,'flowOption',catId+'/',ts,opt=>JSON.stringify({name:opt.name,color:opt.color,shape:opt.shape,period:!!opt.period}));
   if(!!prev.showCycle!==!!next.showCycle){next.showCycleAt=ts;syncDirty=true}
+  if(!Array.isArray(next.periods))next.periods=[];
+  diffChildren(prev.periods||[],next.periods,'period',catId+'/',ts,p=>JSON.stringify({start:p.start,end:p.end||''}));
   if(!next.periodMarkAt||typeof next.periodMarkAt!=='object'||Array.isArray(next.periodMarkAt))next.periodMarkAt={};
   const markDates=new Set([...Object.keys(prev.periodMarks||{}),...Object.keys(next.periodMarks||{}),...Object.keys(prev.periodMarkAt||{}),...Object.keys(next.periodMarkAt||{})]);
   markDates.forEach(date=>{
@@ -9316,6 +9501,7 @@ function mergeFlow(a,b,gone){
     arr=applyOrder(arr,primary,secondary);
     if(arr.length)flow[date]=arr;
   });
+  const periods=mergeItems(a.periods,b.periods,'period',catId+'/',gone);
   const showCycle=numAt(b.showCycleAt)>numAt(a.showCycleAt)?!!b.showCycle:!!a.showCycle;
   const periodMarks={};
   const periodMarkAt={};
@@ -9330,7 +9516,7 @@ function mergeFlow(a,b,gone){
     const value=src.periodMarks&&src.periodMarks[date];
     if(value===true||value===false)periodMarks[date]=value;
   });
-  return {flow,flowOptions,flowOptionOrderAt:Math.max(numAt(a.flowOptionOrderAt),numAt(b.flowOptionOrderAt)),flowOrderAt,showCycle,showCycleAt:Math.max(numAt(a.showCycleAt),numAt(b.showCycleAt)),periodMarks,periodMarkAt};
+  return {flow,flowOptions,flowOptionOrderAt:Math.max(numAt(a.flowOptionOrderAt),numAt(b.flowOptionOrderAt)),flowOrderAt,showCycle,showCycleAt:Math.max(numAt(a.showCycleAt),numAt(b.showCycleAt)),periodMarks,periodMarkAt,periods};
 }
 function mergeRelationships(a,b,gone){
   const catId=a.id||b.id;
@@ -9428,6 +9614,7 @@ function mergeCategory(a,b,gone){
     out.showCycleAt=flow.showCycleAt;
     out.periodMarks=flow.periodMarks;
     out.periodMarkAt=flow.periodMarkAt;
+    out.periods=flow.periods;
   }
   if(a.type==='relationships'||b.type==='relationships'||(a.groups||[]).length||(b.groups||[]).length||(a.people||[]).length||(b.people||[]).length){
     const rel=mergeRelationships(a,b,gone);

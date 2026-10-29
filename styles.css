@@ -140,8 +140,18 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .track-grid .track-day{height:3.05rem;border-radius:.45rem;color:var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;gap:.05rem;padding:0}
 .track-grid .track-day.sel{background:var(--accent);color:var(--on-accent, var(--surface))}
 .track-grid .track-day.today:not(.sel){font-weight:bold;text-decoration:underline}
-.track-grid .track-day.predict{outline:1px dotted var(--accent);outline-offset:-3px}
-.track-grid .track-day.predict.sel{outline-color:var(--on-accent, var(--surface))}
+.track-grid .track-day.predict,.track-grid .track-day.forecast{outline:1px dashed var(--accent);outline-offset:-3px}
+.track-grid .track-day.predict.sel,.track-grid .track-day.forecast.sel{outline-color:var(--on-accent, var(--surface))}
+.period-dot,.forecast-dot{width:.38rem;height:.38rem;border-radius:999px;display:inline-block;margin-top:.06rem;box-sizing:border-box}
+.period-dot{background:currentColor}
+.forecast-dot{background:transparent;border:1.5px dashed currentColor}
+.period-card{margin:0 0 .85rem}
+.period-card .btn{margin-top:.4rem}
+.period-status{margin:0;font-size:1.2rem}
+.period-range,.period-forecast{margin-top:.35rem}
+.period-edit{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.45rem}
+.period-edit .btn{margin-top:0}
+.period-home{margin:0 0 .35rem}
 .track-num{font-size:.84rem}
 .track-hrs{font-size:.62rem;color:inherit;opacity:.8}
 .track-mark{width:.28rem;height:.28rem;border-radius:999px;background:currentColor;opacity:.55}
