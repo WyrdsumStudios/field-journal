@@ -1,12 +1,12 @@
-const CACHE='field-record-v36';
+const CACHE='field-record-v37';
 const SHELL=[
   './',
   './index.html',
-  './styles.css?v=36',
-  './app.js?v=36',
-  './sky.js?v=36',
-  './sky-data.js?v=36',
-  './vendor/astronomy-engine.js?v=36',
+  './styles.css?v=37',
+  './app.js?v=37',
+  './sky.js?v=37',
+  './sky-data.js?v=37',
+  './vendor/astronomy-engine.js?v=37',
   './vendor/leaflet/leaflet.css?v=22',
   './vendor/leaflet/leaflet.js?v=22',
   './vendor/leaflet/images/marker-icon.png',
