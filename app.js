@@ -86,8 +86,8 @@ function sectionBlocks(list){
     return h('div',{class:'labeled'},
       h('p',{class:'kicker section-kicker','data-section-name':name},name),
       title?h('p',{class:'section-heading','data-section-title':title},title):null,
-      tags.length?h('p',{class:'accent sm tags-line section-tags-line'},tags.join(' · ')):null,
-      shownNote(s.text));
+      shownNote(s.text),
+      tags.length?h('p',{class:'accent sm tags-line section-tags-line'},tags.join(' · ')):null);
   });
 }
 function entryMinutes(e){
@@ -3521,7 +3521,7 @@ function normalizeShifts(raw){
   if(!raw||typeof raw!=='object'||Array.isArray(raw))return out;
   Object.keys(raw).forEach(k=>{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(k)||!Array.isArray(raw[k]))return;
-    const list=raw[k].filter(s=>s&&typeof s==='object').map(normalizeShift).filter(s=>s.start&&s.end);
+    const list=raw[k].filter(s=>s&&typeof s==='object').map(normalizeShift).filter(s=>s.start||s.end||cleanLabel(s.label));
     if(list.length)out[k]=list;
   });
   return out;
@@ -3726,6 +3726,7 @@ function shiftWhen(sh){
   const bits=[];
   if(start&&end)bits.push(`${start} – ${end}`);
   else if(start||end)bits.push(start||end);
+  else bits.push('All day');
   if(sh.breakMinutes)bits.push(`${sh.breakMinutes}m break`);
   const label=cleanLabel(sh.label);
   if(label)bits.push(label);
@@ -3861,7 +3862,9 @@ function commitShift(){
   const cat=currentCat();
   if(!cat)return;
   const start=cleanTime(shiftDraft.start),end=cleanTime(shiftDraft.end);
-  if(!start||!end){keepField(start?'#shiftEnd':'#shiftStart');return}
+  const label=String(shiftDraft.label||'').trim();
+  if((start&&!end)||(!start&&end)){keepField(start?'#shiftEnd':'#shiftStart');return}
+  if(!start&&!end&&!label){keepField('#shiftStart');return}
   const raw=String(shiftDraft.breakMin||'').trim();
   let breakMinutes=null;
   if(raw!==''){
@@ -3869,7 +3872,6 @@ function commitShift(){
     if(!Number.isFinite(n)||n<0){keepField('#shiftBreak');return}
     breakMinutes=Math.round(n);
   }
-  const label=String(shiftDraft.label||'').trim();
   const list=ensureShifts(cat,sel);
   if(shiftEditing){
     const sh=list.find(s=>s.id===shiftEditing);
@@ -4162,7 +4164,7 @@ function shiftPanel(cat){
       list.length?h('div',{class:'shift-list',id:'shiftList'},...list.map(sh=>h('div',{class:'shift-row','data-shift':sh.id,'data-minutes':String(shiftMinutes(sh))},
         h('div',{class:'shift-copy'},
           h('p',{class:'shift-when'},shiftWhen(sh)),
-          h('p',{class:'accent sm shift-hours'},formatHours(shiftMinutes(sh)))),
+          cleanTime(sh.start)&&cleanTime(sh.end)?h('p',{class:'accent sm shift-hours'},formatHours(shiftMinutes(sh))):null),
         h('div',{class:'shift-tools'},
           h('button',{type:'button',class:'btn ghost',onclick:()=>beginShiftEdit(sh.id)},'Edit'),
           h('button',{type:'button',class:'item-x','aria-label':`Delete shift ${shiftWhen(sh)}`,onclick:()=>removeShift(sh.id)},'×'))))):h('p',{class:'muted sm',id:'noShifts'},'No shifts for this day.'),
@@ -5744,8 +5746,8 @@ function recordRow(r){
     h('div',{class:'row top-row'},
       h('strong',null,title),
       h('span',{class:'muted sm record-when'},when)),
-    tagLine(r.tags),
     shownNote(r.note),
+    tagLine(r.tags),
     imageGrid(r.images),
     h('div',{class:'entry-actions'},
       h('button',{type:'button',onclick:ev=>{ev.stopPropagation();editRecord(r)}},'Edit'),
@@ -6476,7 +6478,7 @@ function renderCatScreen(){
         render();
       }},tagEdit?'Done':'Edit'))
   ];
-  const writing=type.id==='timer'?[type.tail(draft)]:[...tagBlock,type.tail(draft)];
+  const writing=type.id==='timer'?[type.tail(draft)]:[type.tail(draft),...tagBlock];
   const form=h('form',{class:'card',id:'entryForm',onsubmit:saveEntry},
     editingId?h('p',{class:'muted sm editing-flag'},'Editing entry'):null,
     ...type.fields(draft),
@@ -6540,9 +6542,11 @@ function entryPreview(e){
   if(timer)(Array.isArray(e.sections)?e.sections:[]).forEach(s=>{
     const heading=(s.title||'').trim();
     const tags=tagList(s.tags);
-    if(!heading&&!tags.length)return;
+    const text=notePlain(s.text||'').replace(/\s+/g,' ').trim();
+    if(!heading&&!tags.length&&!text)return;
     const name=(s.name||'').trim()||'Section';
     lines.push(h('p',{class:'preview-section'},heading?`${name}: ${heading}`:name));
+    if(text)lines.push(h('p',{class:'muted sm preview-section-note'},text.length>90?text.slice(0,87)+'…':text));
     if(tags.length)lines.push(h('p',{class:'accent sm preview-section-tags'},tags.join(' · ')));
   });
   return h('div',{class:'preview-block'},
@@ -7403,6 +7407,95 @@ function renderGoalScreen(){
     if(el){el.focus();const n=el.value.length;if(el.setSelectionRange)el.setSelectionRange(n,n)}
     focusTitle=false;
   }
+}
+function clockMinutes(hhmm){
+  const t=cleanTime(hhmm);
+  if(!t)return null;
+  const [h,m]=t.split(':').map(Number);
+  return h*60+m;
+}
+function shiftWindow(sh){
+  const start=clockMinutes(sh&&sh.start),end=clockMinutes(sh&&sh.end);
+  if(start==null&&end==null)return {allDay:true,start:0,end:1440,continues:false};
+  if(start!=null&&end!=null&&end<=start)return {allDay:false,start,end:1440,continues:true};
+  if(start!=null&&end==null)return {allDay:false,start,end:1440,continues:true};
+  if(start==null)return {allDay:false,start:0,end,continues:false};
+  return {allDay:false,start,end:Math.max(end,start),continues:false};
+}
+function workShiftsOn(date){
+  const rows=[];
+  (state.categories||[]).forEach(c=>{
+    if(!c||c.type!=='tracker'||c.tracker==='flow')return;
+    shiftsOn(c,date).forEach(sh=>rows.push({cat:c,sh}));
+  });
+  rows.sort((a,b)=>{
+    const aw=shiftWindow(a.sh),bw=shiftWindow(b.sh);
+    if(aw.allDay!==bw.allDay)return aw.allDay?-1:1;
+    return aw.start-bw.start||String(a.sh.label||'').localeCompare(String(b.sh.label||''));
+  });
+  return rows;
+}
+function shiftBarLabel(row,multi){
+  const name=cleanLabel(row.sh.label);
+  const who=multi?cleanLabel(row.cat.name):'';
+  const head=[who,name].filter(Boolean).join(' · ');
+  const win=shiftWindow(row.sh);
+  if(win.allDay)return [head,'All day'].filter(Boolean).join(' · ');
+  const start=fmtClock(row.sh.start),end=fmtClock(row.sh.end);
+  const when=start&&end?`${start} – ${end}`:start||end||'';
+  return [head,when].filter(Boolean).join(' · ');
+}
+function hourTick(mins){
+  const h=Math.floor(mins/60)%24;
+  const ap=h<12?'a':'p';
+  const hr=h%12||12;
+  return hr+ap;
+}
+function shiftTimelineNode(rows,date){
+  const multi=new Set(rows.map(r=>r.cat.id)).size>1;
+  const hours=[];
+  for(let m=0;m<=1440;m+=180){
+    const pct=m/1440*100;
+    hours.push(h('span',{style:'left:'+pct+'%'},m===1440?'12a':hourTick(m)));
+  }
+  const ticks=[];
+  for(let m=0;m<1440;m+=60)ticks.push(h('i',{style:'left:'+(m/1440*100)+'%'}));
+  const lanes=rows.map(row=>{
+    const win=shiftWindow(row.sh);
+    const left=win.start/1440*100;
+    let width=(win.end-win.start)/1440*100;
+    if(!win.allDay&&width<1.2)width=1.2;
+    const endish=!win.allDay&&win.end/1440>0.82;
+    const caption=shiftBarLabel(row,multi)+(win.continues?' · continues':'');
+    return h('div',{class:'shift-lane'},
+      h('p',{class:'shift-caption',style:endish?'text-align:right':'padding-left:'+left+'%'},caption),
+      h('div',{class:'shift-rail'},
+        h('div',{class:'shift-bar'+(win.allDay?' all-day':'')+(win.continues?' continues':''),style:'left:'+left+'%;width:'+width+'%','data-shift':row.sh.id})));
+  });
+  let now=null;
+  if(date===key(new Date())){
+    const n=new Date();
+    const mins=n.getHours()*60+n.getMinutes();
+    now=h('div',{class:'shift-now',style:'left:'+(mins/1440*100)+'%'},h('span',null,'now'));
+  }
+  return h('div',{class:'shift-scroll',tabindex:'0','aria-label':'Shift timeline'},
+    h('div',{class:'shift-track'},
+      h('div',{class:'shift-scale'},
+        h('div',{class:'shift-hours'},...hours),
+        h('div',{class:'shift-axis'},...ticks),
+        h('div',{class:'shift-bars'},...lanes),
+        now)));
+}
+function renderShiftTimeline(){
+  const block=$('shiftBlock');
+  const box=$('shiftTimeline');
+  if(!block||!box)return;
+  const rows=workShiftsOn(sel);
+  block.hidden=!rows.length;
+  if(!rows.length){box.replaceChildren();return}
+  const head=$('shiftHeading');
+  if(head)head.textContent=rows.length===1?'Shift':'Shifts';
+  box.replaceChildren(shiftTimelineNode(rows,sel));
 }
 function catCard(c){
   const list=dayEntries(sel,c.id);
@@ -9811,7 +9904,7 @@ function render(opts){
     const stored=state.dayTitles&&state.dayTitles[sel];
     t.value=typedDayTitle(sel)&&(typeof stored==='string'?stored:'')||'';
   }
-  renderGoals();renderCats();renderCal();renderDays();
+  renderGoals();renderShiftTimeline();renderCats();renderCal();renderDays();
   if(openCat)renderCatScreen();else{$('catScreen').replaceChildren();$('catScreen').removeAttribute('data-type')}
   if(openGoal)renderGoalScreen();else{$('goalScreen').replaceChildren()}
   todoArrive='';
