@@ -137,7 +137,7 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .track-card .cal-head{margin-bottom:.45rem}
 .track-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:.2rem;text-align:center;font-size:.72rem;color:var(--muted)}
 .track-grid .dow{padding:.2rem 0}
-.track-grid .track-day{height:3.05rem;border-radius:.45rem;color:var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;gap:.05rem;padding:0}
+.track-grid .track-day{position:relative;height:3.05rem;border-radius:.45rem;color:var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;gap:.05rem;padding:0}
 .track-grid .track-day.sel{background:var(--accent);color:var(--on-accent, var(--surface))}
 .track-grid .track-day.today:not(.sel){font-weight:bold;text-decoration:underline}
 .track-grid .track-day.predict,.track-grid .track-day.forecast{outline:1px dashed var(--accent);outline-offset:-3px}
@@ -213,6 +213,19 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .shift-form{margin-top:.7rem}
 .home-shift,.day-shift{margin-top:.45rem}
 .home-week{margin:.35rem 0 0}
+.shift-head{align-items:baseline;margin:1.15rem 0 .35rem}
+.shift-head .block-heading{margin:0}
+.pay-link{color:var(--muted);font-size:.85rem;min-height:2.25rem;padding:.15rem .1rem}
+.pay-link[aria-expanded="true"]{color:var(--accent)}
+.pay-line{display:block;margin:.15rem 0 .7rem;white-space:normal;overflow-wrap:anywhere;line-height:1.4}
+.pay-form{margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--line)}
+.pay-hint{margin:.4rem 0 0}
+.pay-mark{position:absolute;top:.1rem;right:.16rem;font-size:.68rem;line-height:1;color:var(--accent);pointer-events:none}
+.track-day.sel .pay-mark{color:inherit}
+.shift-caption .shift-label,.shift-caption .shift-earn{white-space:nowrap}
+.shift-caption .shift-earn,.shift-when .shift-earn{color:var(--muted)}
+.shift-caption .shift-earn{font-size:.8rem}
+.shift-when .shift-earn{font-size:.92em}
 .flow-line{margin:.35rem 0 0}
 .rel-group{margin-top:1rem}
 .rel-group .list-head{align-items:flex-start}
