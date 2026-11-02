@@ -1406,9 +1406,9 @@ function load(){
           c.todos=nextTodos;
         }
         if(c.type==='tracker'){
-          const before=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt,periods:c.periods});
+          const before=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt,periods:c.periods,pay:c.pay});
           normalizeTracker(c);
-          const after=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt,periods:c.periods});
+          const after=JSON.stringify({tracker:c.tracker,shifts:c.shifts,flow:c.flow,flowOptions:c.flowOptions,showCycle:c.showCycle,periodMarks:c.periodMarks,periodMarkAt:c.periodMarkAt,periods:c.periods,pay:c.pay});
           if(before!==after)migrated=true;
         }
         if(c.type==='relationships'){
@@ -1535,7 +1535,7 @@ let state=load();
 applyAppearance();
 ensureBorderFrames();
 let goalNotesFor=null;
-let skipFormRead=false,skipShiftRead=false;
+let skipFormRead=false,skipShiftRead=false,skipPayRead=false;
 let syncSnap=null,syncQuiet=false,syncDirty=false,syncTimer=null,syncing=false,syncQueued=false;
 let syncLink=null,syncKey=null,syncBusy=false,syncStatusText='',syncMode='idle';
 const save=()=>{
@@ -1573,7 +1573,8 @@ let todoArrive='',todoBusy=false;
 const pendingTodoItems={};
 const todoDoneOpen=new Set(),todoDoneShut=new Set();
 let shiftEditing=null;
-let shiftDraft={start:'',end:'',breakMin:'',label:''};
+let shiftDraft={start:'',end:'',breakMin:'',label:'',rate:''};
+let payOpen=false,payDraft=null;
 let flowEdit=false,flowRenaming=null,pendingFlowName='';
 let recordOpenId=null,recordQuery='';
 let walkPoints=[],walkFinished=false,walkMinutes='',walkQuery='',walkHits=[],walkSearchStatus='';
@@ -2663,6 +2664,8 @@ function openCategory(id){
   resetListUi();
   resetTodoUi();
   resetShiftUi();
+  payOpen=false;
+  payDraft=null;
   resetFlowUi();
   resetRelUi();
   resetRecordUi();
@@ -2679,6 +2682,8 @@ function closeCategory(){
   placeResults=[];
   placeStatus='';
   openCat=null;
+  payOpen=false;
+  payDraft=null;
   browseList=false;
   browseRows.clear();
   editingId=null;
@@ -3859,7 +3864,7 @@ function cleanTime(v){
   if(hh>23||mm>59)return '';
   return `${m[1]}:${m[2]}`;
 }
-function blankShift(){return {start:'',end:'',breakMin:'',label:''}}
+function blankShift(){return {start:'',end:'',breakMin:'',label:'',rate:''}}
 function normalizeShift(sh){
   const copy=Object.assign({},sh);
   copy.id=typeof sh.id==='string'&&sh.id?sh.id:uid();
@@ -3868,6 +3873,13 @@ function normalizeShift(sh){
   const b=sh.breakMinutes;
   copy.breakMinutes=b==null||b===''||!Number.isFinite(Number(b))||Number(b)<0?null:Math.round(Number(b));
   copy.label=typeof sh.label==='string'?sh.label:'';
+  const rate=sh.rate;
+  if(rate==null||rate==='')delete copy.rate;
+  else{
+    const n=Number(rate);
+    if(!Number.isFinite(n)||n<0)delete copy.rate;
+    else copy.rate=Math.round(n*100)/100;
+  }
   return copy;
 }
 function normalizeShifts(raw){
@@ -3944,6 +3956,7 @@ function normalizeTracker(c){
   if(wasPeriod)c.tracker='flow';
   else if(c.tracker!=='flow')c.tracker='shifts';
   c.shifts=normalizeShifts(c.shifts);
+  if(c.pay!=null)c.pay=normalizePay(c.pay);
   if(c.tracker!=='flow')return;
   const legacy=c.flow&&typeof c.flow==='object'&&!Array.isArray(c.flow)&&Object.keys(c.flow).some(k=>typeof c.flow[k]==='string');
   let options=Array.isArray(c.flowOptions)?c.flowOptions.filter(o=>o&&typeof o==='object').map(normalizeFlowOption):[];
@@ -3990,6 +4003,8 @@ function readShiftDraft(){
   if(b)shiftDraft.breakMin=b.value;
   const l=$('shiftLabel');
   if(l)shiftDraft.label=l.value;
+  const r=$('shiftRate');
+  if(r)shiftDraft.rate=r.value;
 }
 function shiftsOn(cat,date){
   const raw=cat&&cat.shifts&&cat.shifts[date];
@@ -4212,6 +4227,220 @@ function monthShiftMinutes(cat,viewDate){
   const prefix=`${viewDate.getFullYear()}-${pad(viewDate.getMonth()+1)}`;
   return Object.keys(cat.shifts||{}).filter(k=>k.startsWith(prefix)).reduce((n,k)=>n+dayShiftMinutes(cat,k),0);
 }
+function payScheduleList(){return [{id:'weekly',label:'Weekly'},{id:'biweekly',label:'Every two weeks'},{id:'semimonthly',label:'15th and last day'},{id:'monthly',label:'Monthly'}]}
+function normalizePay(raw){
+  const src=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+  const currency=String(src.currency||'CAD').trim().toUpperCase();
+  const rate=src.rate==null||src.rate===''?null:Number(src.rate);
+  const offset=src.offset==null||src.offset===''?null:Number(src.offset);
+  const anchor=typeof src.anchor==='string'?src.anchor:'';
+  return {
+    currency:/^[A-Z]{3}$/.test(currency)?currency:'CAD',
+    rate:Number.isFinite(rate)&&rate>0?Math.round(rate*100)/100:null,
+    schedule:payScheduleList().some(s=>s.id===src.schedule)?src.schedule:'',
+    anchor:/^\d{4}-\d{2}-\d{2}$/.test(anchor)?anchor:'',
+    offset:Number.isFinite(offset)&&offset>=0&&offset<=62?Math.round(offset):null
+  };
+}
+function paySettings(cat){return normalizePay(cat&&cat.pay)}
+function payRateOf(cat){return paySettings(cat).rate}
+function payScheduleOn(cat){const p=paySettings(cat);return !!(p.schedule&&p.anchor)}
+function moneyOn(cat){return payRateOf(cat)!=null}
+function payDraftFrom(cat){
+  const p=paySettings(cat);
+  return {currency:p.currency,rate:p.rate==null?'':String(p.rate),schedule:p.schedule,anchor:p.anchor,offset:p.offset==null?'':String(p.offset)};
+}
+function readPayDraft(){
+  const rate=$('payRate');
+  if(!rate)return;
+  payDraft={
+    currency:($('payCurrency')&&$('payCurrency').value)||'CAD',
+    rate:rate.value,
+    schedule:($('paySchedule')&&$('paySchedule').value)||'',
+    anchor:($('payAnchor')&&$('payAnchor').value)||'',
+    offset:($('payOffset')&&$('payOffset').value)||''
+  };
+}
+function commitPay(){
+  readPayDraft();
+  const cat=currentCat();
+  if(!cat||!payDraft)return;
+  const next=normalizePay(payDraft);
+  const prev=JSON.stringify(normalizePay(cat.pay));
+  cat.pay=next;
+  payDraft=payDraftFrom(cat);
+  skipPayRead=true;
+  if(JSON.stringify(next)!==prev)save();
+  render();
+}
+function togglePay(){
+  const cat=currentCat();
+  if(!cat)return;
+  if(payOpen)readPayDraft();
+  payOpen=!payOpen;
+  if(payOpen)payDraft=payDraft||payDraftFrom(cat);
+  render();
+}
+function formatHoursWords(mins){
+  const h=Math.round((Math.max(0,Number(mins)||0)/60)*100)/100;
+  return `${h} h`;
+}
+function money(amount,currency){
+  const n=Math.round((Number(amount)||0)*100)/100;
+  const code=typeof currency==='string'&&/^[A-Z]{3}$/.test(currency)?currency:'CAD';
+  const sign=n<0?'-':'';
+  const body=Math.abs(n).toFixed(2);
+  if(code==='CAD'||code==='USD')return sign+'$'+body;
+  try{return new Intl.NumberFormat('en-CA',{style:'currency',currency:code}).format(n)}catch(e){return sign+'$'+body}
+}
+function shiftRateOf(cat,sh){
+  if(sh&&sh.rate!=null&&sh.rate!==''){
+    const n=Number(sh.rate);
+    if(Number.isFinite(n)&&n>=0)return Math.round(n*100)/100;
+  }
+  return payRateOf(cat);
+}
+function shiftGross(cat,sh){
+  const rate=shiftRateOf(cat,sh);
+  if(rate==null)return null;
+  return Math.round(shiftMinutes(sh)/60*rate*100)/100;
+}
+function shiftEarnText(cat,sh){
+  if(!moneyOn(cat))return '';
+  const mins=shiftMinutes(sh);
+  if(!mins)return '';
+  const gross=shiftGross(cat,sh);
+  if(gross==null)return '';
+  return `${formatHoursWords(mins)} · ${money(gross,paySettings(cat).currency)}`;
+}
+function shiftWhenNode(cat,sh){
+  const earn=shiftEarnText(cat,sh);
+  return h('p',{class:'shift-when'},shiftWhen(sh),earn?h('span',{class:'shift-earn','data-earn':earn},' · '+earn):null);
+}
+function shiftMeta(cat,sh){
+  if(shiftEarnText(cat,sh))return null;
+  const mins=shiftMinutes(sh);
+  if(!(cleanTime(sh.start)&&cleanTime(sh.end))||!mins)return null;
+  return h('p',{class:'accent sm shift-hours'},formatHours(mins));
+}
+function monthPayday(year,month,day){
+  const last=new Date(year,month+1,0).getDate();
+  return key(new Date(year,month,Math.min(day,last)));
+}
+function isPayday(date,pay){
+  if(!pay||!pay.schedule||!pay.anchor||!/^\d{4}-\d{2}-\d{2}$/.test(date))return false;
+  if(pay.schedule==='weekly'||pay.schedule==='biweekly'){
+    const step=pay.schedule==='weekly'?7:14;
+    return daySpan(pay.anchor,date)%step===0;
+  }
+  const d=parse(date);
+  if(pay.schedule==='monthly')return date===monthPayday(d.getFullYear(),d.getMonth(),parse(pay.anchor).getDate());
+  const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
+  return d.getDate()===15||d.getDate()===last;
+}
+function nextPayday(from,pay){
+  if(!pay||!pay.schedule||!pay.anchor)return '';
+  let d=from;
+  for(let i=0;i<400;i++){
+    if(isPayday(d,pay))return d;
+    d=shiftDate(d,1);
+  }
+  return '';
+}
+function prevPayday(before,pay){
+  if(!pay||!pay.schedule||!pay.anchor)return '';
+  let d=shiftDate(before,-1);
+  for(let i=0;i<400;i++){
+    if(isPayday(d,pay))return d;
+    d=shiftDate(d,-1);
+  }
+  return '';
+}
+function periodEndOffset(pay){
+  return pay&&pay.offset!=null?pay.offset:1;
+}
+function periodForPayday(payday,pay){
+  const off=periodEndOffset(pay);
+  const end=shiftDate(payday,-off);
+  const prev=prevPayday(payday,pay);
+  let start=prev?shiftDate(shiftDate(prev,-off),1):end;
+  if(start>end)start=end;
+  return {start,end,payday};
+}
+function shiftBounds(sh,date){
+  const start=cleanTime(sh&&sh.start),end=cleanTime(sh&&sh.end);
+  if(!start||!end)return null;
+  const [ah,am]=start.split(':').map(Number);
+  const [bh,bm]=end.split(':').map(Number);
+  const s=parse(date);s.setHours(ah,am,0,0);
+  const e=parse(date);e.setHours(bh,bm,0,0);
+  if(end<start)e.setDate(e.getDate()+1);
+  return {start:s,end:e};
+}
+function workedMinutes(sh,date,now){
+  const bounds=shiftBounds(sh,date);
+  if(!bounds)return 0;
+  const paid=shiftMinutes(sh);
+  if(now>=bounds.end)return paid;
+  if(now<=bounds.start)return 0;
+  const elapsed=Math.round((now.getTime()-bounds.start.getTime())/60000);
+  return Math.max(0,Math.min(paid,elapsed));
+}
+function periodTotals(cat,period,now){
+  const when=now||new Date();
+  let minutes=0,expected=0,soFar=0;
+  if(!period||period.start>period.end)return {minutes,expected,soFar};
+  let d=period.start,guard=0;
+  while(d<=period.end&&guard<400){
+    shiftsOn(cat,d).forEach(sh=>{
+      const mins=shiftMinutes(sh);
+      const rate=shiftRateOf(cat,sh);
+      minutes+=mins;
+      if(rate!=null&&mins)expected+=Math.round(mins/60*rate*100)/100;
+      const worked=workedMinutes(sh,d,when);
+      if(rate!=null&&worked)soFar+=Math.round(worked/60*rate*100)/100;
+    });
+    d=shiftDate(d,1);
+    guard++;
+  }
+  return {minutes,expected:Math.round(expected*100)/100,soFar:Math.round(soFar*100)/100};
+}
+function paySummaryText(cat,date){
+  if(!moneyOn(cat)||!payScheduleOn(cat))return '';
+  const pay=paySettings(cat);
+  const code=pay.currency;
+  if(isPayday(date,pay)){
+    const period=periodForPayday(date,pay);
+    const totals=periodTotals(cat,period);
+    return `Payday · expecting ${money(totals.expected,code)} for ${shortDate(period.start)}–${shortDate(period.end)} (${formatHoursWords(totals.minutes)}) · gross`;
+  }
+  const nxt=nextPayday(date,pay);
+  if(!nxt)return '';
+  const period=periodForPayday(nxt,pay);
+  const totals=periodTotals(cat,period);
+  return `Next payday ${shortDate(nxt)} · ${money(totals.soFar,code)} so far / ${money(totals.expected,code)} expected · gross`;
+}
+function paySummaryNode(cat,date){
+  const text=paySummaryText(cat,date);
+  if(!text)return null;
+  return h('p',{class:'muted sm pay-line','data-pay-summary':text},text);
+}
+function payFormNode(cat){
+  const draft=payDraft||payDraftFrom(cat);
+  const onChange=()=>commitPay();
+  return h('div',{class:'pay-form',id:'payForm'},
+    h('div',{class:'sleep-times'},
+      h('label',{class:'lbl'},'Hourly rate',h('input',{id:'payRate',class:'field',type:'number',min:'0',step:'0.01',inputmode:'decimal',value:draft.rate,placeholder:'CAD per hour','aria-label':'Hourly rate',oninput:readPayDraft,onchange:onChange})),
+      h('label',{class:'lbl'},'Currency',h('input',{id:'payCurrency',class:'field',value:draft.currency,maxlength:'3',autocomplete:'off','aria-label':'Currency',oninput:readPayDraft,onchange:onChange}))),
+    h('div',{class:'sleep-times'},
+      h('label',{class:'lbl'},'Schedule',h('select',{id:'paySchedule',class:'field','aria-label':'Pay schedule',onchange:onChange},
+        h('option',{value:'',selected:!draft.schedule},'No schedule'),
+        ...payScheduleList().map(s=>h('option',{value:s.id,selected:draft.schedule===s.id},s.label)))),
+      h('label',{class:'lbl'},'A payday',h('input',{id:'payAnchor',class:'field',type:'date',value:draft.anchor,'aria-label':'A payday',onchange:onChange}))),
+    h('label',{class:'lbl'},'Days before payday the period ends',h('input',{id:'payOffset',class:'field',type:'number',min:'0',max:'62',step:'1',inputmode:'numeric',value:draft.offset,placeholder:'1','aria-label':'Days before payday the period ends',oninput:readPayDraft,onchange:onChange})),
+    h('p',{class:'muted sm pay-hint'},draft.schedule==='semimonthly'?'Uses the 15th and the last day of the month. Blank ends the period the day before payday.':'Blank ends the period the day before payday.'),
+    h('p',{class:'muted sm pay-hint'},'Gross, before deductions.'));
+}
 function commitShift(){
   readShiftDraft();
   touchEntry();
@@ -4228,12 +4457,33 @@ function commitShift(){
     if(!Number.isFinite(n)||n<0){keepField('#shiftBreak');return}
     breakMinutes=Math.round(n);
   }
+  let rate=null;
+  let writeRate=false;
+  if(moneyOn(cat)){
+    writeRate=true;
+    const rawRate=String(shiftDraft.rate||'').trim();
+    if(rawRate!==''){
+      const n=Number(rawRate);
+      if(!Number.isFinite(n)||n<0){keepField('#shiftRate');return}
+      rate=Math.round(n*100)/100;
+    }
+  }
   const list=ensureShifts(cat,sel);
   if(shiftEditing){
     const sh=list.find(s=>s.id===shiftEditing);
-    if(sh){sh.start=start;sh.end=end;sh.breakMinutes=breakMinutes;sh.label=label}
+    if(sh){
+      sh.start=start;sh.end=end;sh.breakMinutes=breakMinutes;sh.label=label;
+      if(writeRate){
+        if(rate==null)delete sh.rate;
+        else sh.rate=rate;
+      }
+    }
     shiftEditing=null;
-  }else list.push({id:uid(),start,end,breakMinutes,label});
+  }else{
+    const sh={id:uid(),start,end,breakMinutes,label};
+    if(rate!=null)sh.rate=rate;
+    list.push(sh);
+  }
   shiftDraft=blankShift();
   skipShiftRead=true;
   save();
@@ -4245,7 +4495,7 @@ function beginShiftEdit(id){
   const sh=shiftsOn(currentCat(),sel).find(s=>s.id===id);
   if(!sh)return;
   shiftEditing=id;
-  shiftDraft={start:sh.start,end:sh.end,breakMin:sh.breakMinutes==null?'':String(sh.breakMinutes),label:sh.label||''};
+  shiftDraft={start:sh.start,end:sh.end,breakMin:sh.breakMinutes==null?'':String(sh.breakMinutes),label:sh.label||'',rate:sh.rate==null?'':String(sh.rate)};
   skipShiftRead=true;
   render();
   keepField('#shiftStart');
@@ -4594,18 +4844,21 @@ function trackCalendar(cat){
     const names=flow?flowSummary(cat,k).map(g=>(g.option.name||'Flow')+(g.count>1?` ×${g.count}`:'')).join(', '):'';
     const onPeriod=!!(logged&&logged.has(k));
     const onForecast=!!(predicted.has(k)&&!onPeriod);
-    const bits=[hours,names,onPeriod?'period':onForecast?'predicted period':''] .filter(Boolean);
+    const payday=!flow&&moneyOn(cat)&&payScheduleOn(cat)&&isPayday(k,paySettings(cat));
+    const bits=[hours,names,onPeriod?'period':onForecast?'predicted period':'',payday?'payday':''].filter(Boolean);
     cells.push(h('button',{
       type:'button','data-day':k,
       'data-hours':hours,
       'data-flow':names,
       'data-period':onPeriod?'true':'false',
       'data-forecast':onForecast?'true':'false',
-      class:['track-day',k===sel&&'sel',k===today&&'today',onPeriod&&'period',onForecast&&'forecast'].filter(Boolean).join(' '),
+      'data-payday':payday?'true':'false',
+      class:['track-day',k===sel&&'sel',k===today&&'today',onPeriod&&'period',onForecast&&'forecast',payday&&'payday'].filter(Boolean).join(' '),
       'aria-label':[fmt(k),...bits].join(', '),
       onclick:()=>select(k)
     },
       h('span',{class:'track-num'},String(d)),
+      payday?h('span',{class:'pay-mark','aria-hidden':'true'},'$'):null,
       !flow&&hours?h('span',{class:'track-mark','aria-hidden':'true'}):null,
       !flow&&hours?h('span',{class:'track-hrs'},hours):null,
       onPeriod?h('span',{class:'period-dot','aria-hidden':'true'}):null,
@@ -4687,13 +4940,17 @@ function cycleInfo(cat,date){
 function shiftPanel(cat){
   const list=shiftsOn(cat,sel);
   const onKey=ev=>{if(ev.key==='Enter'){ev.preventDefault();commitShift()}};
+  const summary=paySummaryNode(cat,sel);
   return h('div',{id:'shiftBoard'},
-    h('h2',{class:'block-heading'},'Shifts'),
+    h('div',{class:'row shift-head'},
+      h('h2',{class:'block-heading'},'Shifts'),
+      h('button',{type:'button',class:'pay-link',id:'payToggle','aria-expanded':payOpen?'true':'false',onclick:togglePay},'Pay')),
+    summary,
     h('div',{class:'card'},
       list.length?h('div',{class:'shift-list',id:'shiftList'},...list.map(sh=>h('div',{class:'shift-row','data-shift':sh.id,'data-minutes':String(shiftMinutes(sh))},
         h('div',{class:'shift-copy'},
-          h('p',{class:'shift-when'},shiftWhen(sh)),
-          cleanTime(sh.start)&&cleanTime(sh.end)?h('p',{class:'accent sm shift-hours'},formatHours(shiftMinutes(sh))):null),
+          shiftWhenNode(cat,sh),
+          shiftMeta(cat,sh)),
         h('div',{class:'shift-tools'},
           h('button',{type:'button',class:'btn ghost',onclick:()=>beginShiftEdit(sh.id)},'Edit'),
           h('button',{type:'button',class:'item-x','aria-label':`Delete shift ${shiftWhen(sh)}`,onclick:()=>removeShift(sh.id)},'×'))))):h('p',{class:'muted sm',id:'noShifts'},'No shifts for this day.'),
@@ -4704,9 +4961,11 @@ function shiftPanel(cat){
         h('div',{class:'sleep-times'},
           h('label',{class:'lbl'},'Unpaid break (minutes)',h('input',{id:'shiftBreak',class:'field',type:'number',min:'0',step:'1',inputmode:'numeric',value:shiftDraft.breakMin,placeholder:'Optional',oninput:readShiftDraft,onkeydown:onKey})),
           h('label',{class:'lbl'},'Label',h('input',{id:'shiftLabel',class:'field',value:shiftDraft.label,placeholder:'Role or location',autocomplete:'off',oninput:readShiftDraft,onkeydown:onKey}))),
+        moneyOn(cat)?h('label',{class:'lbl'},'Hourly rate',h('input',{id:'shiftRate',class:'field',type:'number',min:'0',step:'0.01',inputmode:'decimal',value:shiftDraft.rate,placeholder:'Optional','aria-label':'Hourly rate for this shift',oninput:readShiftDraft,onkeydown:onKey})):null,
         h('div',{class:'actions'},
           h('button',{type:'button',class:'btn',id:shiftEditing?'saveShift':'addShift',onclick:commitShift},shiftEditing?'Save shift':'Add shift'),
-          shiftEditing?h('button',{type:'button',class:'btn ghost',id:'cancelShift',onclick:cancelShiftEdit},'Cancel'):null))));
+          shiftEditing?h('button',{type:'button',class:'btn ghost',id:'cancelShift',onclick:cancelShiftEdit},'Cancel'):null)),
+      payOpen?payFormNode(cat):null));
 }
 function flowOptionRow(cat,opt,index,count){
   const logged=flowLogsOn(cat,sel).filter(l=>l.optionId===opt.id).length;
@@ -4789,10 +5048,12 @@ function trackerHomeBits(cat){
     ].filter(Boolean);
   }
   const lines=shiftsOn(cat,sel).map(sh=>h('div',{class:'home-shift','data-shift':sh.id},
-    h('p',{class:'shift-when'},shiftWhen(sh)),
-    h('p',{class:'accent sm shift-hours'},formatHours(shiftMinutes(sh)))));
+    shiftWhenNode(cat,sh),
+    shiftMeta(cat,sh)||(!cleanTime(sh.start)||!cleanTime(sh.end)?h('p',{class:'accent sm shift-hours'},formatHours(shiftMinutes(sh))):null)));
   const week=weekDates(sel).reduce((n,day)=>n+dayShiftMinutes(cat,day),0);
   if(week)lines.push(h('p',{class:'muted sm home-week','data-week-hours':String(week)},`This week ${formatHours(week)}`));
+  const summary=paySummaryNode(cat,sel);
+  if(summary)lines.push(summary);
   return lines;
 }
 function trackerReview(cat,date){
@@ -4812,10 +5073,12 @@ function trackerReview(cat,date){
   const shifts=shiftsOn(cat,date);
   if(!shifts.length)return null;
   const week=weekDates(date).reduce((n,day)=>n+dayShiftMinutes(cat,day),0);
+  const summary=isPayday(date,paySettings(cat))?paySummaryNode(cat,date):null;
   return h('div',{class:'day-track','data-track':date},
     ...shifts.map(sh=>h('div',{class:'day-shift','data-shift':sh.id},
-      h('p',{class:'shift-when'},shiftWhen(sh)),
-      h('p',{class:'accent sm shift-hours'},formatHours(shiftMinutes(sh))))),
+      shiftWhenNode(cat,sh),
+      shiftMeta(cat,sh))),
+    summary,
     week?h('p',{class:'muted sm home-week','data-week-hours':String(week)},`This week ${formatHours(week)}`):null);
 }
 function normalizeRelNote(note){
@@ -8008,8 +8271,11 @@ function shiftTimelineNode(rows,date){
     if(!win.allDay&&width<1.2)width=1.2;
     const endish=!win.allDay&&win.end/1440>0.82;
     const caption=shiftBarLabel(row,multi)+(win.continues?' · continues':'');
+    const earn=shiftEarnText(row.cat,row.sh);
     return h('div',{class:'shift-lane'},
-      h('p',{class:'shift-caption',style:endish?'text-align:right':'padding-left:'+left+'%'},caption),
+      h('p',{class:'shift-caption',style:endish?'text-align:right':'padding-left:'+left+'%'},
+        h('span',{class:'shift-label'},caption),
+        earn?h('span',{class:'shift-earn'},' · '+earn):null),
       h('div',{class:'shift-rail'},
         h('div',{class:'shift-bar'+(win.allDay?' all-day':'')+(win.continues?' continues':''),style:'left:'+left+'%;width:'+width+'%','data-shift':row.sh.id})));
   });
@@ -8027,16 +8293,104 @@ function shiftTimelineNode(rows,date){
         h('div',{class:'shift-bars'},...lanes),
         now)));
 }
+let shiftFocusObs=null;
+let shiftFocusPointer=false;
+function focusShiftTimeline(scrollEl,rows,date){
+  if(!scrollEl||!scrollEl.isConnected||shiftFocusPointer)return;
+  const track=scrollEl.querySelector('.shift-track');
+  if(!track)return;
+  const view=scrollEl.clientWidth;
+  const width=track.scrollWidth;
+  if(view<8||width<=0)return;
+  scrollEl.style.scrollBehavior='auto';
+  if(width<=view+1){scrollEl.scrollLeft=0;return}
+  const todayKey=key(new Date());
+  const now=new Date();
+  const nowMin=now.getHours()*60+now.getMinutes();
+  const timed=rows.map(r=>({id:r.sh.id,win:shiftWindow(r.sh)})).filter(w=>!w.win.allDay).sort((a,b)=>a.win.start-b.win.start||a.win.end-b.win.end);
+  const live=date===todayKey?timed.find(w=>nowMin>=w.win.start&&nowMin<w.win.end):null;
+  const allDay=!live&&!timed.length;
+  let startMin,endMin,focusMin;
+  if(live){
+    startMin=live.win.start;endMin=live.win.end;focusMin=nowMin;
+  }else if(timed.length){
+    startMin=timed[0].win.start;endMin=timed[0].win.end;focusMin=(startMin+endMin)/2;
+  }else{
+    focusMin=date===todayKey?nowMin:8*60;
+    startMin=focusMin;endMin=focusMin;
+  }
+  const x=m=>m/1440*width;
+  const rangeStart=Math.max(0,startMin-60);
+  const rangeEnd=Math.min(1440,endMin+60);
+  const rangeW=x(rangeEnd)-x(rangeStart);
+  let left=x(focusMin)-view/2;
+  if(!allDay&&rangeW<=view){
+    const rangeLeft=x(rangeStart)-(left);
+    const rangeRight=x(rangeEnd)-(left+view);
+    if(rangeLeft<0)left+=rangeLeft;
+    else if(rangeRight>0)left+=rangeRight;
+  }
+  const max=Math.max(0,scrollEl.scrollWidth-view);
+  scrollEl.scrollLeft=Math.max(0,Math.min(left,max));
+  if(allDay)return;
+  const id=(live||timed[0]).id;
+  const bar=scrollEl.querySelector('.shift-bar[data-shift="'+cssEscape(id)+'"]');
+  const lane=bar&&bar.closest('.shift-lane');
+  const label=lane&&lane.querySelector('.shift-label');
+  const earnEl=lane&&lane.querySelector('.shift-earn');
+  const nodes=[label,earnEl,bar].filter(Boolean);
+  const box=scrollEl.getBoundingClientRect();
+  const parts=nodes.map(n=>n.getBoundingClientRect()).filter(r=>r.width>0);
+  if(!parts.length||box.width<8)return;
+  const pad=8;
+  const leftEdge=Math.min.apply(null,parts.map(r=>r.left));
+  const rightEdge=Math.max.apply(null,parts.map(r=>r.right));
+  const span=rightEdge-leftEdge;
+  if(span<=box.width-pad*2){
+    if(leftEdge<box.left+pad)scrollEl.scrollLeft-=box.left+pad-leftEdge;
+    else if(rightEdge>box.right-pad)scrollEl.scrollLeft+=rightEdge-(box.right-pad);
+  }else if(!live&&label){
+    const cap=label.getBoundingClientRect();
+    const earnBox=earnEl&&earnEl.getBoundingClientRect();
+    const textRight=earnBox?Math.max(cap.right,earnBox.right):cap.right;
+    if(cap.left<box.left+pad)scrollEl.scrollLeft-=box.left+pad-cap.left;
+    else if(textRight>box.right-pad&&textRight-cap.left<=box.width-pad*2)scrollEl.scrollLeft+=textRight-(box.right-pad);
+  }
+  scrollEl.scrollLeft=Math.max(0,Math.min(scrollEl.scrollLeft,max));
+}
+function bindShiftFocus(scrollEl,rows,date){
+  if(shiftFocusObs){shiftFocusObs.disconnect();shiftFocusObs=null}
+  shiftFocusPointer=false;
+  const run=()=>focusShiftTimeline(scrollEl,rows,date);
+  const down=()=>{shiftFocusPointer=true};
+  const up=()=>{shiftFocusPointer=false};
+  scrollEl.addEventListener('pointerdown',down);
+  scrollEl.addEventListener('pointerup',up);
+  scrollEl.addEventListener('pointercancel',up);
+  run();
+  requestAnimationFrame(()=>requestAnimationFrame(run));
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(run);
+  if(typeof ResizeObserver==='function'){
+    shiftFocusObs=new ResizeObserver(run);
+    shiftFocusObs.observe(scrollEl);
+  }
+}
 function renderShiftTimeline(){
   const block=$('shiftBlock');
   const box=$('shiftTimeline');
   if(!block||!box)return;
   const rows=workShiftsOn(sel);
   block.hidden=!rows.length;
-  if(!rows.length){box.replaceChildren();return}
+  if(!rows.length){
+    if(shiftFocusObs){shiftFocusObs.disconnect();shiftFocusObs=null}
+    box.replaceChildren();
+    return;
+  }
   const head=$('shiftHeading');
   if(head)head.textContent=rows.length===1?'Shift':'Shifts';
   box.replaceChildren(shiftTimelineNode(rows,sel));
+  const scroll=box.querySelector('.shift-scroll');
+  if(scroll)bindShiftFocus(scroll,rows,sel);
 }
 function catCard(c){
   const list=dayEntries(sel,c.id);
@@ -8684,6 +9038,8 @@ function resetJournalView(){
   newTracker='shifts';
   addingGoal=false;
   resetShiftUi();
+  payOpen=false;
+  payDraft=null;
   resetFlowUi();
   abandonRelImages();
   resetRelUi();
@@ -8937,7 +9293,7 @@ function diffChildren(prevList,nextList,kind,prefix,ts,sig){
   });
 }
 function categoryShellSig(c){
-  return JSON.stringify({name:c.name,type:c.type,tags:c.tags,sectionNames:c.sectionNames,sectionTags:c.sectionTags,place:c.place,tracker:c.tracker,skyPlaces:c.skyPlaces,skyLast:c.skyLast,skyHighlight:c.skyHighlight,skyPlanet:c.skyPlanet,skyWindow:c.skyWindow,skyNames:c.skyNames,skyFacing:c.skyFacing,skyHorizon:c.skyHorizon});
+  return JSON.stringify({name:c.name,type:c.type,tags:c.tags,sectionNames:c.sectionNames,sectionTags:c.sectionTags,place:c.place,tracker:c.tracker,pay:c.pay?normalizePay(c.pay):null,skyPlaces:c.skyPlaces,skyLast:c.skyLast,skyHighlight:c.skyHighlight,skyPlanet:c.skyPlanet,skyWindow:c.skyWindow,skyNames:c.skyNames,skyFacing:c.skyFacing,skyHorizon:c.skyHorizon});
 }
 function buryCategory(c,ts){
   bury('category',c.id,ts);
@@ -9067,7 +9423,7 @@ function diffShifts(prev,next,ts){
     const a=(prev.shifts&&prev.shifts[date])||[];
     const b=(next.shifts&&next.shifts[date])||[];
     if(idOrder(a)!==idOrder(b)){next.shiftOrderAt[date]=ts;syncDirty=true}
-    diffChildren(a,b,'shift',catId+'/'+date+'/',ts,sh=>JSON.stringify({start:sh.start,end:sh.end,breakMinutes:sh.breakMinutes,label:sh.label}));
+    diffChildren(a,b,'shift',catId+'/'+date+'/',ts,sh=>JSON.stringify({start:sh.start,end:sh.end,breakMinutes:sh.breakMinutes,label:sh.label,rate:sh.rate==null?null:sh.rate}));
   });
 }
 function diffFlow(prev,next,ts){
@@ -10344,18 +10700,20 @@ function fieldFocused(el){
   return active===el||noteHost(active)===el;
 }
 function readLiveFields(){
-  let entry=false,shift=false,rel=false;
+  let entry=false,shift=false,rel=false,pay=false;
   document.querySelectorAll(FIELD_SEL).forEach(el=>{
     if(!isTypingEl(el))return;
     if(!fieldFocused(el)&&!fieldDirty(el))return;
     if(el.closest('#entryForm')){if(!skipFormRead)entry=true;return}
     if(el.closest('#relForm')){if(!skipFormRead)rel=true;return}
     if(el.closest('.shift-form')){if(!skipShiftRead)shift=true;return}
+    if(el.closest('#payForm')){pay=true;return}
     absorbField(el);
   });
   if(entry)readDraft();
   if(rel)readRelSections();
   if(shift)readShiftDraft();
+  if(pay)readPayDraft();
 }
 function holdSkip(el){
   return !el||el.id==='dayTitle'||el.id==='syncCodeInput'||el.id==='syncCodeInputFull';
@@ -10441,6 +10799,8 @@ function render(opts){
   readLiveFields();
   if(!skipShiftRead)readShiftDraft();
   skipShiftRead=false;
+  if(!skipPayRead)readPayDraft();
+  skipPayRead=false;
   skipFormRead=false;
   destroyMaps();
   if(openCat&&!currentCat())openCat=null;
