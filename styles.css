@@ -209,21 +209,23 @@ textarea.field{min-height:4.5rem;resize:vertical}
 .shift-row,.home-shift,.day-shift{display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem}
 .shift-when{margin:0}
 .shift-hours{margin:.1rem 0 0}
-.shift-tools{display:flex;align-items:center;gap:.25rem;flex:0 0 auto}
+.shift-tools{display:flex;align-items:center;gap:.35rem;flex:0 0 auto}
+.shift-tools .btn{margin-top:0}
 .shift-form{margin-top:.7rem}
+.shift-card-top{align-items:center;margin:0 0 .45rem}
+.shift-card-top .block-heading{margin:0}
+.shift-card .pay-line{color:var(--ink);margin:.1rem 0 .85rem}
 .shift-clock-lbl{font-size:.82rem;color:var(--ink)}
-input[type="time"].field,input[type="date"].field{color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:.6rem;font-family:inherit;min-height:2.75rem;color-scheme:light}
-input[type="time"].field::-webkit-datetime-edit,
-input[type="time"].field::-webkit-datetime-edit-fields-wrapper,
-input[type="time"].field::-webkit-datetime-edit-hour-field,
-input[type="time"].field::-webkit-datetime-edit-minute-field,
-input[type="time"].field::-webkit-datetime-edit-ampm-field{color:var(--ink);background:transparent}
+.shift-time{position:relative;display:block;margin-top:.35rem}
+.shift-time-input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:1;color-scheme:light}
+.shift-time-face{display:flex;align-items:center;min-height:2.75rem;padding:.55rem .75rem;border:1px solid var(--line);border-radius:.6rem;background:var(--bg);color:var(--ink);pointer-events:none}
+.shift-time-face.empty{color:var(--muted)}
+.shift-time-input:focus+.shift-time-face{outline:2px solid var(--accent);outline-offset:1px}
+input[type="date"].field{color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:.6rem;font-family:inherit;min-height:2.75rem;color-scheme:light}
 .home-shift,.day-shift{margin-top:.45rem}
 .home-week{margin:.35rem 0 0}
 .shift-head{align-items:baseline;margin:1.15rem 0 .35rem}
 .shift-head .block-heading{margin:0}
-.pay-link{color:var(--muted);font-size:.85rem;min-height:2.25rem;padding:.15rem .1rem}
-.pay-link[aria-expanded="true"]{color:var(--accent)}
 .pay-line{display:block;margin:.15rem 0 .7rem;white-space:normal;overflow-wrap:anywhere;line-height:1.4}
 .pay-form{margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--line)}
 .pay-hint{margin:.4rem 0 0}
@@ -472,18 +474,23 @@ html[data-look="vine"] .top .grow,html[data-look="vine"] .cat-top,html[data-look
 html[data-look="vine"] .top .grow{padding:.45rem .75rem .6rem}
 html[data-look="vine"] .cat-heading{display:table;padding:.15rem .6rem;margin-top:.45rem}
 html[data-look="wood"] .pill,html[data-look="wood"] .circle{background:#f6efe2;border-color:#c4a07a;color:#3a2718}
-html[data-look="wood"] .pay-line{display:table;background:#f6efe2;color:#3a2718;padding:.22rem .7rem;border-radius:.4rem}
-html[data-look="wood"] .pay-link{color:#3a2718;background:#f6efe2;border-radius:.4rem;padding:.15rem .65rem;min-height:0;line-height:1.3;position:relative;z-index:1}
-html[data-look="wood"] .shift-earn,html[data-look="wood"] .pay-mark,html[data-look="wood"] .shift-clock-lbl{color:#3a2718}
+html[data-look="wood"] .card.shift-card{background-color:#f6efe2;background-clip:padding-box}
+html[data-look="wood"] .shift-card .block-heading,html[data-look="wood"] .shift-card .pay-line,html[data-look="wood"] .shift-clock-lbl{display:block;background:none;color:#3a2718;padding:0;margin:0}
+html[data-look="wood"] .shift-card .pay-line{margin:.35rem 0 .85rem}
+html[data-look="wood"] .shift-earn,html[data-look="wood"] .pay-mark{color:#3a2718}
 html[data-look="wood"] .track-day.sel .pay-mark{color:inherit}
-html[data-look="wood"] input[type="time"].field,html[data-look="wood"] input[type="date"].field{background:#f6efe2;color:#3a2718;border:1px solid #c4a07a;border-radius:.6rem;color-scheme:light}
-html[data-look="wood"] input[type="time"].field::-webkit-calendar-picker-indicator{opacity:.8;cursor:pointer}
-html[data-look="vine"] .pay-line{display:table;background:#f4f8ec;color:#1a2e1c;padding:.22rem .7rem;border-radius:.4rem}
-html[data-look="vine"] .pay-link{color:#1a2e1c;background:#f4f8ec;border-radius:.4rem;padding:.15rem .65rem;min-height:0;line-height:1.3;position:relative;z-index:1}
+html[data-look="wood"] .shift-time-face,html[data-look="wood"] input[type="date"].field{background:#f6efe2;color:#3a2718;border:1px solid #c4a07a;border-radius:.6rem}
+html[data-look="wood"] .shift-time-face.empty{color:#5c4332}
+html[data-look="wood"] .shift-tools .btn.ghost{color:#3a2718;border-color:#c4a07a;background:#f6efe2}
+html[data-look="vine"] .card.shift-card{background-color:#f4f8ec;background-clip:padding-box}
+html[data-look="vine"] .shift-card .block-heading,html[data-look="vine"] .shift-card .pay-line{display:block;background:none;color:#1a2e1c;padding:0;margin:0}
+html[data-look="vine"] .shift-card .pay-line{margin:.35rem 0 .85rem}
 html[data-look="vine"] .shift-earn{color:#1a2e1c}
-html[data-look="retro"] .pay-line{display:table;background:#8ae04f;color:#14240f;border:2px solid #0e3012;border-radius:.25rem;padding:.22rem .55rem}
-html[data-look="retro"] .shift-head .pay-link{color:#e7ffc4;background:#123d16;border-radius:.25rem;padding:.15rem .55rem;min-height:0;line-height:1.3;position:relative;z-index:1}
+html[data-look="vine"] .shift-time-face{background:#f4f8ec;color:#1a2e1c;border-color:#7ea56a}
 html[data-look="retro"] .shift-earn{color:#14240f}
+html[data-look="retro"] .shift-time-face{background:#f4ffe4;color:#14240f;border:2px solid #0e3012;border-radius:.25rem}
+html[data-look="retro"] .shift-time-face.empty{color:#245018}
+html[data-look="retro"] .shift-tools .btn.ghost{color:#14240f;background:#c8e878;border-color:#0e3012}
 html[data-look="vine"] .pill,html[data-look="vine"] .circle{background:#f4f8ec;border-color:#7ea56a;color:#1a2e1c}
 
 html[data-look="retro"] .card,html[data-look="retro"] .entry-card,html[data-look="retro"] .day-block,html[data-look="retro"] .new-cat,html[data-look="retro"] .look-opt,html[data-look="retro"] .field,html[data-look="retro"] .pill,html[data-look="retro"] .btn,html[data-look="retro"] .circle,html[data-look="retro"] .chip,html[data-look="retro"] .thumb-open{border-radius:.25rem}
