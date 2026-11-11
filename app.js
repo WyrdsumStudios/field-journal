@@ -1574,6 +1574,7 @@ const pendingTodoItems={};
 const todoDoneOpen=new Set(),todoDoneShut=new Set();
 let shiftEditing=null;
 let shiftDraft={start:'',end:'',breakMin:'',label:'',rate:''};
+let endSuggested=false;
 let payOpen=false,payDraft=null;
 let flowEdit=false,flowRenaming=null,pendingFlowName='';
 let recordOpenId=null,recordQuery='';
@@ -3991,6 +3992,7 @@ function flowMark(option){
 function resetShiftUi(){
   shiftEditing=null;
   shiftDraft=blankShift();
+  endSuggested=false;
   skipShiftRead=true;
 }
 function readShiftDraft(){
@@ -4441,6 +4443,58 @@ function payFormNode(cat){
     h('p',{class:'muted sm pay-hint'},draft.schedule==='semimonthly'?'Uses the 15th and the last day of the month. Blank ends the period the day before payday.':'Blank ends the period the day before payday.'),
     h('p',{class:'muted sm pay-hint'},'Gross, before deductions.'));
 }
+function recentShiftSpan(cat){
+  const dates=Object.keys((cat&&cat.shifts)||{}).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  for(let i=dates.length-1;i>=0;i--){
+    const list=(cat.shifts[dates[i]]||[]).slice().reverse();
+    for(let j=0;j<list.length;j++){
+      const sh=list[j];
+      if(shiftEditing&&sh.id===shiftEditing)continue;
+      const a=clockMinutes(sh.start),b=clockMinutes(sh.end);
+      if(a==null||b==null)continue;
+      let mins=b-a;
+      if(mins<=0)mins+=1440;
+      if(mins>0&&mins<1440)return mins;
+    }
+  }
+  return 450;
+}
+function clockPlus(hhmm,mins){
+  const base=clockMinutes(hhmm);
+  if(base==null)return '';
+  const n=((base+Math.round(mins))%1440+1440)%1440;
+  return pad(Math.floor(n/60))+':'+pad(n%60);
+}
+function suggestEnd(){
+  const startEl=$('shiftStart'),endEl=$('shiftEnd');
+  if(!startEl||!endEl)return;
+  const start=cleanTime(startEl.value);
+  if(!start)return;
+  const current=cleanTime(endEl.value);
+  if(!current||endSuggested){
+    const next=clockPlus(start,recentShiftSpan(currentCat()));
+    endEl.value=next;
+    shiftDraft.end=next;
+    endSuggested=true;
+  }
+  endEl.focus();
+  if(typeof endEl.showPicker==='function'){
+    try{endEl.showPicker()}catch(err){}
+  }
+}
+function confirmEnd(){
+  endSuggested=false;
+  readShiftDraft();
+}
+function blurEnd(){
+  if(!endSuggested)return;
+  const endEl=$('shiftEnd');
+  if(endEl&&document.activeElement!==endEl){
+    endEl.value='';
+    shiftDraft.end='';
+    endSuggested=false;
+  }
+}
 function commitShift(){
   readShiftDraft();
   touchEntry();
@@ -4485,6 +4539,7 @@ function commitShift(){
     list.push(sh);
   }
   shiftDraft=blankShift();
+  endSuggested=false;
   skipShiftRead=true;
   save();
   render();
@@ -4495,6 +4550,7 @@ function beginShiftEdit(id){
   const sh=shiftsOn(currentCat(),sel).find(s=>s.id===id);
   if(!sh)return;
   shiftEditing=id;
+  endSuggested=false;
   shiftDraft={start:sh.start,end:sh.end,breakMin:sh.breakMinutes==null?'':String(sh.breakMinutes),label:sh.label||'',rate:sh.rate==null?'':String(sh.rate)};
   skipShiftRead=true;
   render();
@@ -4956,8 +5012,8 @@ function shiftPanel(cat){
           h('button',{type:'button',class:'item-x','aria-label':`Delete shift ${shiftWhen(sh)}`,onclick:()=>removeShift(sh.id)},'×'))))):h('p',{class:'muted sm',id:'noShifts'},'No shifts for this day.'),
       h('div',{class:'shift-form',id:'shiftForm'},
         h('div',{class:'sleep-times'},
-          h('label',{class:'lbl'},'Start',h('input',{id:'shiftStart',class:'field',type:'time',value:shiftDraft.start,oninput:readShiftDraft,onkeydown:onKey})),
-          h('label',{class:'lbl'},'End',h('input',{id:'shiftEnd',class:'field',type:'time',value:shiftDraft.end,oninput:readShiftDraft,onkeydown:onKey}))),
+          h('label',{class:'lbl shift-clock-lbl'},'Start',h('input',{id:'shiftStart',class:'field',type:'time',value:shiftDraft.start,'aria-label':'Start',oninput:readShiftDraft,onchange:suggestEnd,onkeydown:onKey})),
+          h('label',{class:'lbl shift-clock-lbl'},'End',h('input',{id:'shiftEnd',class:'field',type:'time',value:shiftDraft.end,'aria-label':'End',oninput:()=>{endSuggested=false;readShiftDraft()},onchange:confirmEnd,onblur:blurEnd,onkeydown:onKey}))),
         h('div',{class:'sleep-times'},
           h('label',{class:'lbl'},'Unpaid break (minutes)',h('input',{id:'shiftBreak',class:'field',type:'number',min:'0',step:'1',inputmode:'numeric',value:shiftDraft.breakMin,placeholder:'Optional',oninput:readShiftDraft,onkeydown:onKey})),
           h('label',{class:'lbl'},'Label',h('input',{id:'shiftLabel',class:'field',value:shiftDraft.label,placeholder:'Role or location',autocomplete:'off',oninput:readShiftDraft,onkeydown:onKey}))),
