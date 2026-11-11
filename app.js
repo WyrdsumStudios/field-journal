@@ -4425,7 +4425,18 @@ function paySummaryText(cat,date){
 function paySummaryNode(cat,date){
   const text=paySummaryText(cat,date);
   if(!text)return null;
-  return h('p',{class:'muted sm pay-line','data-pay-summary':text},text);
+  return h('p',{class:'sm pay-line','data-pay-summary':text},text);
+}
+function payButton(){
+  return h('button',{type:'button',class:'btn ghost',id:'payToggle','aria-expanded':payOpen?'true':'false','aria-pressed':payOpen?'true':'false',onclick:ev=>{ev.stopPropagation();togglePay()}},'Pay');
+}
+function shiftClock(id,label,value,extra){
+  const shown=fmtClock(value);
+  return h('label',{class:'lbl shift-clock-lbl'},
+    label,
+    h('span',{class:'shift-time'},
+      h('input',Object.assign({id,class:'field shift-time-input',type:'time',value:value||'','aria-label':label},extra)),
+      h('span',{class:'shift-time-face'+(shown?'':' empty'),'aria-hidden':'true'},shown||'Choose a time')));
 }
 function payFormNode(cat){
   const draft=payDraft||payDraftFrom(cat);
@@ -4477,10 +4488,20 @@ function suggestEnd(){
     shiftDraft.end=next;
     endSuggested=true;
   }
+  paintTimeFace(startEl);
+  paintTimeFace(endEl);
   endEl.focus();
   if(typeof endEl.showPicker==='function'){
     try{endEl.showPicker()}catch(err){}
   }
+}
+function paintTimeFace(input){
+  if(!input)return;
+  const face=input.nextElementSibling;
+  if(!face||!face.classList.contains('shift-time-face'))return;
+  const shown=fmtClock(input.value);
+  face.textContent=shown||'Choose a time';
+  face.classList.toggle('empty',!shown);
 }
 function confirmEnd(){
   endSuggested=false;
@@ -4493,6 +4514,7 @@ function blurEnd(){
     endEl.value='';
     shiftDraft.end='';
     endSuggested=false;
+    paintTimeFace(endEl);
   }
 }
 function commitShift(){
@@ -4998,22 +5020,23 @@ function shiftPanel(cat){
   const onKey=ev=>{if(ev.key==='Enter'){ev.preventDefault();commitShift()}};
   const summary=paySummaryNode(cat,sel);
   return h('div',{id:'shiftBoard'},
-    h('div',{class:'row shift-head'},
-      h('h2',{class:'block-heading'},'Shifts'),
-      h('button',{type:'button',class:'pay-link',id:'payToggle','aria-expanded':payOpen?'true':'false',onclick:togglePay},'Pay')),
-    summary,
-    h('div',{class:'card'},
-      list.length?h('div',{class:'shift-list',id:'shiftList'},...list.map(sh=>h('div',{class:'shift-row','data-shift':sh.id,'data-minutes':String(shiftMinutes(sh))},
+    h('div',{class:'card shift-card'},
+      h('div',{class:'row shift-card-top'},
+        h('h2',{class:'block-heading'},'Shifts'),
+        list.length?null:payButton()),
+      summary,
+      list.length?h('div',{class:'shift-list',id:'shiftList'},...list.map((sh,i)=>h('div',{class:'shift-row','data-shift':sh.id,'data-minutes':String(shiftMinutes(sh))},
         h('div',{class:'shift-copy'},
           shiftWhenNode(cat,sh),
           shiftMeta(cat,sh)),
         h('div',{class:'shift-tools'},
+          i===0?payButton():null,
           h('button',{type:'button',class:'btn ghost',onclick:()=>beginShiftEdit(sh.id)},'Edit'),
           h('button',{type:'button',class:'item-x','aria-label':`Delete shift ${shiftWhen(sh)}`,onclick:()=>removeShift(sh.id)},'×'))))):h('p',{class:'muted sm',id:'noShifts'},'No shifts for this day.'),
       h('div',{class:'shift-form',id:'shiftForm'},
         h('div',{class:'sleep-times'},
-          h('label',{class:'lbl shift-clock-lbl'},'Start',h('input',{id:'shiftStart',class:'field',type:'time',value:shiftDraft.start,'aria-label':'Start',oninput:readShiftDraft,onchange:suggestEnd,onkeydown:onKey})),
-          h('label',{class:'lbl shift-clock-lbl'},'End',h('input',{id:'shiftEnd',class:'field',type:'time',value:shiftDraft.end,'aria-label':'End',oninput:()=>{endSuggested=false;readShiftDraft()},onchange:confirmEnd,onblur:blurEnd,onkeydown:onKey}))),
+          shiftClock('shiftStart','Start',shiftDraft.start,{oninput:()=>{readShiftDraft();paintTimeFace($('shiftStart'))},onchange:suggestEnd,onkeydown:onKey}),
+          shiftClock('shiftEnd','End',shiftDraft.end,{oninput:()=>{endSuggested=false;readShiftDraft();paintTimeFace($('shiftEnd'))},onchange:confirmEnd,onblur:blurEnd,onkeydown:onKey})),
         h('div',{class:'sleep-times'},
           h('label',{class:'lbl'},'Unpaid break (minutes)',h('input',{id:'shiftBreak',class:'field',type:'number',min:'0',step:'1',inputmode:'numeric',value:shiftDraft.breakMin,placeholder:'Optional',oninput:readShiftDraft,onkeydown:onKey})),
           h('label',{class:'lbl'},'Label',h('input',{id:'shiftLabel',class:'field',value:shiftDraft.label,placeholder:'Role or location',autocomplete:'off',oninput:readShiftDraft,onkeydown:onKey}))),
