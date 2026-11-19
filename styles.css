@@ -717,3 +717,90 @@ html[data-look="retro"] .sketch-tool.on{background:#123d16;color:#e7ffc4;border-
   #printRoot .accent{color:#2f5d45}
   #printRoot .route-canvas{border:1px solid #e2dacb}
 }
+/* Astrology, inside the Sky category */
+.astro-panel{margin-top:1rem}
+.astro-heading{margin-top:1.4rem}
+.astro-card{margin-top:.85rem}
+.astro-title{font-size:1.15rem;margin:0 0 .15rem}
+.astro-sub{font-size:.95rem;margin:1rem 0 .35rem;color:inherit}
+.astro-when{margin:0 0 .6rem}
+.astro-note{margin:.6rem 0 0;line-height:1.45}
+.astro-glyph{display:inline-block;min-width:1.3em;font-family:"Noto Sans Symbols","Noto Sans Symbols 2","Segoe UI Symbol","DejaVu Sans","Apple Symbols",serif;font-variant-emoji:text;color:var(--accent);text-align:center}
+.astro-glyph.sm{min-width:1.1em;font-size:.95em}
+.astro-table{width:100%;border-collapse:collapse;font-size:.95rem}
+.astro-table th,.astro-table td{padding:.42rem .3rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+.astro-table thead th{font-size:.72rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding-top:0}
+.astro-table tbody tr:last-child th,.astro-table tbody tr:last-child td{border-bottom:0}
+.astro-table tbody th{font-weight:600;white-space:nowrap}
+.astro-con{font-size:.8rem;color:var(--muted);text-align:right!important}
+.astro-link{display:inline-flex;align-items:center;gap:.15rem;padding:.1rem 0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.astro-link:hover,.astro-link:focus-visible{text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
+.astro-deg{font-variant-numeric:tabular-nums;min-width:2.1em;display:inline-block}
+.astro-rx{display:inline-block;margin-left:.35rem;padding:0 .35rem;border:1px solid var(--accent);border-radius:999px;font-size:.68rem;font-weight:600;line-height:1.5;color:var(--accent);vertical-align:middle}
+.astro-lines{list-style:none;margin:0;padding:0;display:grid;gap:.4rem}
+.astro-lines li{font-size:.92rem;line-height:1.45}
+.astro-lead{font-weight:600}
+.astro-wheel{max-width:440px;margin:.3rem auto 0}
+.astro-wheel svg{display:block;width:100%;height:auto;overflow:visible}
+.wh-ring{fill:color-mix(in srgb, var(--accent) 6%, transparent);stroke:var(--muted);stroke-width:1.2}
+.wh-inner{fill:var(--surface);stroke:var(--muted);stroke-width:1}
+.wh-hub{fill:color-mix(in srgb, var(--accent) 5%, transparent);stroke:var(--line);stroke-width:1}
+.wh-spoke{stroke:var(--line);stroke-width:1}
+.wh-tick{stroke:var(--muted);stroke-width:.8;opacity:.6}
+.wh-hit{fill:transparent;cursor:pointer;transition:fill .15s}
+.wh-sign:hover .wh-hit,.wh-sign:focus .wh-hit{fill:color-mix(in srgb, var(--accent) 12%, transparent)}
+.wh-sign.on .wh-hit{fill:color-mix(in srgb, var(--accent) 18%, transparent)}
+.wh-sign:focus,.wh-planet:focus{outline:none}
+.wh-sign-glyph{font-size:19px;fill:currentColor;pointer-events:none;font-family:"Noto Sans Symbols","Noto Sans Symbols 2","Segoe UI Symbol","DejaVu Sans","Apple Symbols",serif}
+.wh-sign.sun .wh-sign-glyph{fill:var(--accent);font-weight:700}
+.wh-ptick{stroke:var(--accent);stroke-width:2}
+.wh-planet{cursor:pointer}
+.wh-pdot{fill:var(--surface);stroke:var(--accent);stroke-width:1.2}
+.wh-planet.on .wh-pdot,.wh-planet:hover .wh-pdot,.wh-planet:focus .wh-pdot{fill:var(--accent)}
+.wh-pglyph{font-size:14px;fill:currentColor;pointer-events:none;font-family:"Noto Sans Symbols","Noto Sans Symbols 2","Segoe UI Symbol","DejaVu Sans","Apple Symbols",serif}
+.wh-planet.on .wh-pglyph,.wh-planet:hover .wh-pglyph,.wh-planet:focus .wh-pglyph{fill:var(--on-accent, var(--surface))}
+.wh-rx{font-size:9px;font-weight:700;fill:var(--accent);pointer-events:none}
+.wh-hub-text{font-size:11px;fill:var(--muted);font-style:italic}
+.astro-menu-lbl{margin:1rem 0 .1rem}
+.astro-menu{position:relative;display:flex;gap:.4rem;overflow-x:auto;padding:.15rem .1rem .55rem;scroll-snap-type:x proximity;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+.astro-pick{flex:0 0 auto;display:inline-flex;align-items:center;gap:.2rem;min-height:2.5rem;margin-top:0;padding:.3rem .8rem .3rem .55rem;scroll-snap-align:start;white-space:nowrap}
+.astro-pick.on{background:var(--accent);color:var(--on-accent, var(--surface));border-color:var(--accent)}
+.astro-pick.on .astro-glyph{color:inherit}
+.astro-detail{margin:.35rem 0 .2rem;padding:.85rem .95rem;border:1px solid var(--line);border-radius:.75rem;background:var(--bg);color:var(--ink)}
+.astro-detail-head{display:flex;align-items:center;gap:.75rem;margin-bottom:.45rem}
+.astro-detail-head p{margin:0}
+.astro-big{display:inline-flex;align-items:center;justify-content:center;width:2.6rem;height:2.6rem;border-radius:50%;border:1px solid var(--line);font-size:1.45rem;color:var(--accent);font-family:"Noto Sans Symbols","Noto Sans Symbols 2","Segoe UI Symbol","DejaVu Sans","Apple Symbols",serif;flex:0 0 auto}
+.astro-name{font-size:1.1rem;font-weight:600}
+.astro-badge{display:inline-block;margin-left:.5rem;padding:.05rem .5rem;border-radius:999px;background:color-mix(in srgb, var(--accent) 14%, transparent);color:var(--accent);font-size:.72rem;font-weight:500;vertical-align:middle}
+.astro-text{margin:.2rem 0 .55rem;line-height:1.55}
+.astro-today{margin:0 0 .6rem;font-size:.92rem;font-style:italic;color:var(--muted)}
+.astro-facts{display:grid;grid-template-columns:auto 1fr;gap:.25rem .9rem;margin:0;font-size:.88rem}
+.astro-fact{display:contents}
+.astro-facts dt{color:var(--muted);font-size:.78rem;letter-spacing:.04em;text-transform:uppercase;padding-top:.1rem}
+.astro-facts dd{margin:0}
+html[data-look="wood"] .astro-detail{background:#f6efe2;color:#3a2718;border-color:#d9c2a0}
+html[data-look="wood"] .astro-pick.btn.ghost{background:#f6efe2;color:#3a2718;border-color:#c4a07a}
+html[data-look="wood"] .astro-pick.btn.ghost.on{background:var(--accent);color:#fbf6ee;border-color:var(--accent)}
+html[data-look="wood"] .wh-inner{fill:#f6efe2}
+html[data-look="wood"] .astro-heading{display:table}
+@media (max-width:480px){
+  .astro-table{font-size:.88rem}
+  .astro-table th,.astro-table td{padding:.38rem .15rem}
+  .astro-con{font-size:.74rem}
+  .astro-detail{padding:.75rem .8rem}
+}
+.astro-con-inline{display:none}
+@media (max-width:560px){
+  .astro-table .astro-con{display:none}
+  .astro-con-inline{display:block;margin:.05rem 0 0 2.1em;font-size:.72rem;color:var(--muted);line-height:1.2}
+  .astro-con-inline::before{content:"in the sky: "}
+  .astro-rx{margin-left:.25rem;padding:0 .28rem;font-size:.62rem}
+  .astro-table tbody th .astro-glyph{min-width:1.1em}
+}
+.wh-pdot.rx{stroke-dasharray:3 2.2;stroke-width:1.4}
+html[data-look="retro"] .astro-detail{background:#c8e878;color:#14240f;border-color:#0e3012;border-radius:0}
+html[data-look="retro"] .astro-detail .muted,html[data-look="retro"] .astro-today,html[data-look="retro"] .astro-facts dt{color:#2c4a1e}
+html[data-look="retro"] .astro-badge{background:#123d16;color:#e7ffc4}
+html[data-look="retro"] .wh-hub-text{fill:#245018}
+html[data-look="retro"] .wh-tick{stroke:#245018}
+html[data-look="retro"] .wh-ring,html[data-look="retro"] .wh-inner{stroke:#0e3012}

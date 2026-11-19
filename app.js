@@ -6942,6 +6942,7 @@ function repaintSkyLive(skipPath){
     up.textContent=ready?Sky.whatsUp(draft.sky.lat,draft.sky.lng,when):'';
     up.hidden=!up.textContent;
   }
+  if(window.Astro)Astro.update(when);
   const cap=$('skyCaption');
   if(cap&&ready){
     const place=(draft.sky.name||'').trim()||(Number(draft.sky.lat).toFixed(2)+', '+Number(draft.sky.lng).toFixed(2));
@@ -7377,6 +7378,7 @@ function renderCatScreen(){
     h('h2',{class:'cat-heading',id:'catName'},cat.name),
     type.id==='weather'?weatherPanel(cat):null,
     type.id==='sky'?skyPanel(cat):null,
+    type.id==='sky'&&window.Astro?Astro.panel(skyWhen(sel,draft.sky)):null,
     type.id==='list'?listBoard(cat):null,
     type.id==='list'?mealBoard(cat):null,
     ...(type.id==='tracker'?trackBoard(cat):[]),
